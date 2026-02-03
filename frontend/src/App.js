@@ -1,7 +1,7 @@
 import '@/App.css';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Home from '@/pages/Home';
-import Analysis from '@/pages/Analysis';
+import CameraScanner from '@/components/CameraScanner';
 import Results from '@/pages/Results';
 import { Toaster } from '@/components/ui/sonner';
 
@@ -11,7 +11,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/analysis" element={<Analysis />} />
+          <Route path="/scan" element={<CameraScanner />} />
           <Route path="/results/:id" element={<Results />} />
         </Routes>
       </BrowserRouter>
