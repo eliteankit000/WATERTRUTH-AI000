@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, Droplets, AlertCircle, CheckCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Droplets, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -10,16 +9,31 @@ import { toast } from 'sonner';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Detection thresholds
+const QUALITY_THRESHOLDS = {
+  BLUR_MIN: 100,
+  BRIGHTNESS_MIN: 60,
+  BRIGHTNESS_MAX: 220,
+  AUTO_CAPTURE_QUALITY: 85,
+  WATER_CONFIDENCE_MIN: 60
+};
+
 export default function CameraScanner() {
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+  const captureAttemptRef = useRef(0);
   
   const [cameraActive, setCameraActive] = useState(false);
   const [status, setStatus] = useState('initializing');
   const [analyzing, setAnalyzing] = useState(false);
-  const [frameQuality, setFrameQuality] = useState(0);
+  const [metrics, setMetrics] = useState({
+    quality: 0,
+    blur: 0,
+    brightness: 0,
+    waterConfidence: 0
+  });
   const [permissionDenied, setPermissionDenied] = useState(false);
 
   // Camera initialization
@@ -37,7 +51,7 @@ export default function CameraScanner() {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
         setCameraActive(true);
-        setStatus('ready');
+        setStatus('detecting_water');
         setPermissionDenied(false);
       }
     } catch (error) {
@@ -57,9 +71,74 @@ export default function CameraScanner() {
     setCameraActive(false);
   }, []);
 
-  // Analyze frame quality (blur detection, lighting check)
-  const analyzeFrameQuality = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return 0;
+  // Detect water surface (basic heuristic)
+  const detectWaterSurface = useCallback((imageData) => {
+    const data = imageData.data;
+    let bluePixels = 0;
+    let uniformRegions = 0;
+    
+    // Check for blue/cyan tones (water often has blue tint)
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      
+      // Check if pixel has blue/cyan characteristics
+      if (b > r && b > g - 20) {
+        bluePixels++;
+      }
+    }
+    
+    const blueRatio = bluePixels / (data.length / 4);
+    
+    // Check for uniform regions (water tends to be more uniform)
+    const blockSize = 20;
+    const width = imageData.width;
+    const height = imageData.height;
+    
+    for (let y = 0; y < height - blockSize; y += blockSize) {
+      for (let x = 0; x < width - blockSize; x += blockSize) {
+        let variance = 0;
+        let mean = 0;
+        let count = 0;
+        
+        for (let by = 0; by < blockSize; by++) {
+          for (let bx = 0; bx < blockSize; bx++) {
+            const idx = ((y + by) * width + (x + bx)) * 4;
+            const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+            mean += brightness;
+            count++;
+          }
+        }
+        mean /= count;
+        
+        for (let by = 0; by < blockSize; by++) {
+          for (let bx = 0; bx < blockSize; bx++) {
+            const idx = ((y + by) * width + (x + bx)) * 4;
+            const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+            variance += Math.pow(brightness - mean, 2);
+          }
+        }
+        variance /= count;
+        
+        if (variance < 500) {
+          uniformRegions++;
+        }
+      }
+    }
+    
+    const totalBlocks = Math.floor(height / blockSize) * Math.floor(width / blockSize);
+    const uniformRatio = uniformRegions / totalBlocks;
+    
+    // Water confidence score
+    const waterConfidence = Math.min(100, (blueRatio * 40 + uniformRatio * 60));
+    
+    return waterConfidence;
+  }, []);
+
+  // Analyze frame quality and detect water
+  const analyzeFrame = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return null;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -79,61 +158,104 @@ export default function CameraScanner() {
     }
     const avgBrightness = totalBrightness / (data.length / 4);
 
-    // Calculate variance (blur indicator - lower variance = more blur)
-    let variance = 0;
+    // Calculate Laplacian variance (blur detection)
+    const grayscale = new Uint8ClampedArray(canvas.width * canvas.height);
     for (let i = 0; i < data.length; i += 4) {
-      const pixelBrightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      variance += Math.pow(pixelBrightness - avgBrightness, 2);
+      grayscale[i / 4] = (data[i] + data[i + 1] + data[i + 2]) / 3;
     }
-    variance = variance / (data.length / 4);
+    
+    let laplacianSum = 0;
+    for (let y = 1; y < canvas.height - 1; y++) {
+      for (let x = 1; x < canvas.width - 1; x++) {
+        const idx = y * canvas.width + x;
+        const laplacian = Math.abs(
+          4 * grayscale[idx] -
+          grayscale[idx - 1] -
+          grayscale[idx + 1] -
+          grayscale[idx - canvas.width] -
+          grayscale[idx + canvas.width]
+        );
+        laplacianSum += laplacian * laplacian;
+      }
+    }
+    const blurScore = Math.sqrt(laplacianSum / ((canvas.width - 2) * (canvas.height - 2)));
 
-    // Quality scoring
+    // Detect water surface
+    const waterConfidence = detectWaterSurface(imageData);
+
+    // Calculate overall quality score
     let qualityScore = 0;
 
-    // Lighting check (optimal: 80-200)
-    if (avgBrightness >= 80 && avgBrightness <= 200) {
-      qualityScore += 40;
-    } else if (avgBrightness >= 60 && avgBrightness <= 220) {
+    // Lighting quality (0-35 points)
+    if (avgBrightness >= QUALITY_THRESHOLDS.BRIGHTNESS_MIN && 
+        avgBrightness <= QUALITY_THRESHOLDS.BRIGHTNESS_MAX) {
+      qualityScore += 35;
+    } else if (avgBrightness >= 40 && avgBrightness <= 240) {
       qualityScore += 20;
     }
 
-    // Sharpness check (variance > 500 indicates good sharpness)
-    if (variance > 800) {
-      qualityScore += 60;
-    } else if (variance > 500) {
-      qualityScore += 40;
-    } else if (variance > 300) {
+    // Sharpness quality (0-35 points)
+    if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN * 1.5) {
+      qualityScore += 35;
+    } else if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN) {
       qualityScore += 20;
+    } else if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN * 0.5) {
+      qualityScore += 10;
     }
 
-    return Math.min(100, qualityScore);
-  }, []);
+    // Water detection (0-30 points)
+    if (waterConfidence >= QUALITY_THRESHOLDS.WATER_CONFIDENCE_MIN) {
+      qualityScore += 30;
+    } else if (waterConfidence >= 40) {
+      qualityScore += 15;
+    }
 
-  // Auto-capture logic
+    return {
+      quality: Math.min(100, qualityScore),
+      blur: blurScore,
+      brightness: avgBrightness,
+      waterConfidence: waterConfidence
+    };
+  }, [detectWaterSurface]);
+
+  // Automatic capture logic (no button)
   useEffect(() => {
-    if (!cameraActive || analyzing || status !== 'ready') return;
+    if (!cameraActive || analyzing) return;
 
     const interval = setInterval(() => {
-      const quality = analyzeFrameQuality();
-      setFrameQuality(quality);
+      const frameMetrics = analyzeFrame();
+      if (!frameMetrics) return;
 
-      // Update status based on quality
-      if (quality >= 70) {
-        setStatus('optimal');
-      } else if (quality >= 50) {
+      setMetrics(frameMetrics);
+
+      // Update status based on metrics
+      if (frameMetrics.waterConfidence < QUALITY_THRESHOLDS.WATER_CONFIDENCE_MIN) {
+        setStatus('detecting_water');
+      } else if (frameMetrics.blur < QUALITY_THRESHOLDS.BLUR_MIN) {
+        setStatus('too_blurry');
+      } else if (frameMetrics.brightness < QUALITY_THRESHOLDS.BRIGHTNESS_MIN) {
+        setStatus('too_dark');
+      } else if (frameMetrics.brightness > QUALITY_THRESHOLDS.BRIGHTNESS_MAX) {
+        setStatus('too_bright');
+      } else if (frameMetrics.quality < QUALITY_THRESHOLDS.AUTO_CAPTURE_QUALITY) {
         setStatus('stabilizing');
       } else {
-        setStatus('detecting');
+        setStatus('optimal');
       }
 
-      // Auto-capture when quality is optimal
-      if (quality >= 80 && status === 'optimal') {
-        captureAndAnalyze();
+      // AUTO-CAPTURE when optimal (NO BUTTON)
+      if (frameMetrics.quality >= QUALITY_THRESHOLDS.AUTO_CAPTURE_QUALITY && 
+          status === 'optimal' && 
+          captureAttemptRef.current === 0) {
+        captureAttemptRef.current = 1;
+        setTimeout(() => {
+          captureAndAnalyze();
+        }, 500); // Brief delay for stability
       }
-    }, 500);
+    }, 300);
 
     return () => clearInterval(interval);
-  }, [cameraActive, analyzing, status, analyzeFrameQuality]);
+  }, [cameraActive, analyzing, status, analyzeFrame]);
 
   // Capture and analyze
   const captureAndAnalyze = async () => {
@@ -170,9 +292,10 @@ export default function CameraScanner() {
       navigate(`/results/${response.data.id}`);
     } catch (error) {
       console.error('Analysis error:', error);
-      toast.error('Analysis failed. Please try again.');
+      toast.error('Analysis failed. Retrying...');
+      captureAttemptRef.current = 0;
       setAnalyzing(false);
-      setStatus('ready');
+      setStatus('detecting_water');
       startCamera();
     }
   };
@@ -188,8 +311,14 @@ export default function CameraScanner() {
     switch (status) {
       case 'initializing':
         return 'Initializing camera...';
-      case 'detecting':
+      case 'detecting_water':
         return 'Point camera at water surface';
+      case 'too_blurry':
+        return 'Hold camera steady...';
+      case 'too_dark':
+        return 'Need more light...';
+      case 'too_bright':
+        return 'Too bright, adjust angle...';
       case 'stabilizing':
         return 'Stabilizing image...';
       case 'optimal':
@@ -204,7 +333,9 @@ export default function CameraScanner() {
   };
 
   const getStatusIcon = () => {
-    if (status === 'optimal' || status === 'analyzing') {
+    if (status === 'analyzing') {
+      return <Loader2 className="w-6 h-6 text-primary animate-spin" strokeWidth={1.5} />;
+    } else if (status === 'optimal') {
       return <CheckCircle className="w-6 h-6 text-green-500" strokeWidth={1.5} />;
     } else if (status === 'error') {
       return <AlertCircle className="w-6 h-6 text-destructive" strokeWidth={1.5} />;
@@ -224,15 +355,15 @@ export default function CameraScanner() {
           <div>
             <h2 className="text-2xl font-bold mb-2">Camera Access Required</h2>
             <p className="text-muted-foreground">
-              WaterTruth AI needs camera access to scan water samples. Please enable camera permissions in your browser settings and refresh the page.
+              WaterTruth AI needs camera access to scan water samples. Please enable camera permissions in your browser settings and refresh.
             </p>
           </div>
-          <Button 
+          <button 
             onClick={() => window.location.reload()} 
-            className="w-full"
+            className="w-full bg-primary text-primary-foreground h-12 rounded-full font-medium"
           >
             Retry
-          </Button>
+          </button>
         </Card>
       </div>
     );
@@ -255,43 +386,50 @@ export default function CameraScanner() {
       {/* Camera Overlay */}
       <div className="absolute inset-0 pointer-events-none">
         {/* Top Status Bar */}
-        <div className="absolute top-0 left-0 right-0 p-6 bg-gradient-to-b from-black/80 to-transparent">
+        <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/90 to-transparent">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Droplets className="w-6 h-6 text-white" strokeWidth={1.5} />
-              <span className="text-white font-semibold text-lg">WaterTruth AI</span>
+              <Droplets className="w-5 h-5 text-white" strokeWidth={1.5} />
+              <span className="text-white font-semibold">WaterTruth AI</span>
             </div>
-            <div className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-white text-sm">
-              {frameQuality}% Quality
+            <div className="flex flex-col items-end gap-1">
+              <div className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-white text-xs">
+                Quality {metrics.quality}%
+              </div>
+              {metrics.waterConfidence > 0 && (
+                <div className="text-white/70 text-xs">
+                  Water {Math.round(metrics.waterConfidence)}%
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         {/* Center Guide Frame */}
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative w-80 h-80 border-4 border-white/50 rounded-3xl">
-            {/* Corner markers */}
-            <div className="absolute top-0 left-0 w-16 h-16 border-t-4 border-l-4 border-primary rounded-tl-3xl" />
-            <div className="absolute top-0 right-0 w-16 h-16 border-t-4 border-r-4 border-primary rounded-tr-3xl" />
-            <div className="absolute bottom-0 left-0 w-16 h-16 border-b-4 border-l-4 border-primary rounded-bl-3xl" />
-            <div className="absolute bottom-0 right-0 w-16 h-16 border-b-4 border-r-4 border-primary rounded-br-3xl" />
-            
-            {/* Center crosshair */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-8 h-8">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-full h-0.5 bg-white/70"></div>
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="h-full w-0.5 bg-white/70"></div>
-                </div>
-              </div>
+          <div className="relative w-72 h-72 md:w-80 md:h-80">
+            {/* Scanning reticle */}
+            <div className="absolute inset-0 border-2 border-white/40 rounded-3xl">
+              {/* Corner markers */}
+              <div className="absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 border-primary rounded-tl-3xl" />
+              <div className="absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 border-primary rounded-tr-3xl" />
+              <div className="absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 border-primary rounded-bl-3xl" />
+              <div className="absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 border-primary rounded-br-3xl" />
             </div>
+            
+            {/* Scanning animation when detecting */}
+            {(status === 'detecting_water' || status === 'stabilizing') && (
+              <motion.div
+                className="absolute inset-0 border-t-2 border-primary/60"
+                animate={{ top: ['0%', '100%'] }}
+                transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+              />
+            )}
           </div>
         </div>
 
         {/* Bottom Status */}
-        <div className="absolute bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-black/90 to-transparent">
+        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/95 via-black/80 to-transparent">
           <AnimatePresence mode="wait">
             <motion.div
               key={status}
@@ -302,7 +440,7 @@ export default function CameraScanner() {
             >
               <div className="flex items-center justify-center gap-3">
                 {getStatusIcon()}
-                <span className="text-white text-xl font-medium">
+                <span className="text-white text-lg font-medium">
                   {getStatusMessage()}
                 </span>
               </div>
@@ -316,29 +454,24 @@ export default function CameraScanner() {
               )}
 
               {!analyzing && status !== 'error' && (
-                <p className="text-white/70 text-sm max-w-md mx-auto">
-                  Position water within the frame. The system will automatically capture when conditions are optimal.
+                <p className="text-white/60 text-sm max-w-xs mx-auto">
+                  {status === 'detecting_water' && 'Position water within the frame'}
+                  {status === 'stabilizing' && 'Almost ready...'}
+                  {status === 'optimal' && 'Perfect! Capturing now...'}
+                  {(status === 'too_blurry' || status === 'too_dark' || status === 'too_bright') && 'Adjust camera position'}
                 </p>
+              )}
+
+              {/* NO CAPTURE BUTTON - FULLY AUTOMATIC */}
+              {!analyzing && status !== 'error' && (
+                <div className="text-white/40 text-xs pt-2">
+                  Automatic capture enabled
+                </div>
               )}
             </motion.div>
           </AnimatePresence>
         </div>
       </div>
-
-      {/* Manual Capture Override (for testing) */}
-      {cameraActive && !analyzing && (
-        <div className="absolute bottom-32 left-0 right-0 flex justify-center pointer-events-auto">
-          <Button
-            data-testid="manual-capture-btn"
-            onClick={captureAndAnalyze}
-            size="lg"
-            className="bg-white text-black hover:bg-white/90 rounded-full shadow-2xl px-8 py-6"
-          >
-            <Camera className="w-5 h-5 mr-2" />
-            Capture Now
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

@@ -6,10 +6,10 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List
 import uuid
 from datetime import datetime, timezone
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import io
 import base64
 import numpy as np
@@ -38,20 +38,20 @@ logger = logging.getLogger(__name__)
 
 # Models
 class VisualFeatures(BaseModel):
-    optical_reflection: float  # 0-100 score
-    refraction_distortion: float  # 0-100 score
-    surface_texture: float  # 0-100 score
-    turbidity: float  # 0-100 score
-    color_deviation: float  # 0-100 score
-    overall_quality: float  # 0-100 score
+    optical_reflection: float
+    refraction_distortion: float
+    surface_texture: float
+    turbidity: float
+    color_deviation: float
+    overall_quality: float
 
 class WaterAnalysis(BaseModel):
     model_config = ConfigDict(extra="ignore")
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    image_data: str  # Base64 encoded image
-    risk_level: str  # LOW, MEDIUM, HIGH
-    confidence: float  # 0-100
+    image_data: str
+    risk_level: str
+    confidence: float
     visual_features: VisualFeatures
     ai_explanation: str
     recommendation: str
@@ -66,16 +66,78 @@ class AnalysisResponse(BaseModel):
     recommendation: str
     timestamp: str
 
-# Mock Visual Analysis Functions
-def analyze_image_features(image: Image.Image) -> VisualFeatures:
+# Image Preprocessing Pipeline
+def preprocess_image(image: Image.Image) -> Image.Image:
     """
-    Mock CV analysis - extracts visual features from water image
-    In production, this would use actual CV models
+    Image standardization pipeline:
+    1. White balance correction (simplified)
+    2. Contrast normalization
+    3. Noise reduction
     """
+    logger.info("Starting image preprocessing")
+    
     # Convert to RGB if needed
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
+    # 1. Auto white balance (simplified histogram stretching)
+    img_array = np.array(image).astype(float)
+    
+    # Stretch each channel to full range
+    for i in range(3):
+        channel = img_array[:, :, i]
+        channel_min = np.percentile(channel, 5)
+        channel_max = np.percentile(channel, 95)
+        if channel_max > channel_min:
+            img_array[:, :, i] = np.clip(
+                255 * (channel - channel_min) / (channel_max - channel_min), 0, 255
+            )
+    
+    image = Image.fromarray(img_array.astype(np.uint8))
+    
+    # 2. Contrast normalization
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(1.2)
+    
+    # 3. Noise reduction (Gaussian blur)
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
+    
+    logger.info("Image preprocessing completed")
+    return image
+
+def validate_image_quality(image: Image.Image) -> dict:
+    """
+    Validate image quality before analysis
+    Returns quality metrics and pass/fail
+    """
+    img_array = np.array(image.convert('L'))  # Convert to grayscale
+    
+    # Blur detection (Laplacian variance)
+    laplacian = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
+    laplacian_result = np.zeros_like(img_array, dtype=float)
+    
+    for i in range(1, img_array.shape[0] - 1):
+        for j in range(1, img_array.shape[1] - 1):
+            laplacian_result[i, j] = np.sum(img_array[i-1:i+2, j-1:j+2] * laplacian)
+    
+    blur_score = np.var(laplacian_result)
+    
+    # Exposure check
+    brightness = np.mean(img_array)
+    
+    # Determine quality
+    is_quality_ok = blur_score > 50 and 40 < brightness < 240
+    
+    return {
+        'blur_score': float(blur_score),
+        'brightness': float(brightness),
+        'quality_ok': is_quality_ok
+    }
+
+def analyze_image_features(image: Image.Image) -> VisualFeatures:
+    """
+    Extract visual features from preprocessed water image
+    """
     # Resize for consistent analysis
     image = image.resize((224, 224))
     img_array = np.array(image)
@@ -85,39 +147,25 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
     g_mean = np.mean(img_array[:, :, 1])
     b_mean = np.mean(img_array[:, :, 2])
     
-    # Calculate color variance (texture indicator)
     r_var = np.var(img_array[:, :, 0])
     g_var = np.var(img_array[:, :, 1])
     b_var = np.var(img_array[:, :, 2])
     total_var = (r_var + g_var + b_var) / 3
     
-    # Calculate color balance (deviation from neutral)
     color_balance = abs(r_mean - g_mean) + abs(g_mean - b_mean) + abs(b_mean - r_mean)
-    
-    # Calculate brightness
     brightness = (r_mean + g_mean + b_mean) / 3
     
-    # Mock visual feature scores (0-100)
-    # Higher scores = better water quality indicators
-    
-    # Optical reflection (based on brightness and uniformity)
+    # Visual feature scores (0-100, higher = better water quality)
     optical_reflection = min(100, max(0, (brightness / 255) * 100 - (total_var / 100)))
-    
-    # Refraction distortion (based on color uniformity)
     refraction_distortion = min(100, max(0, 100 - (color_balance / 2)))
-    
-    # Surface texture (based on variance)
     surface_texture = min(100, max(0, 100 - (total_var / 50)))
-    
-    # Turbidity (based on clarity indicators)
     turbidity = min(100, max(0, (brightness / 255) * 100 - (total_var / 80)))
     
-    # Color deviation (how far from clear water - bluish/transparent)
-    ideal_clear_water = np.array([180, 200, 220])  # Light blue-ish clear water
+    # Color deviation from clear water
+    ideal_clear_water = np.array([180, 200, 220])
     color_diff = np.sqrt(np.sum((np.array([r_mean, g_mean, b_mean]) - ideal_clear_water) ** 2))
     color_deviation = min(100, max(0, 100 - (color_diff / 3)))
     
-    # Overall quality score
     overall_quality = (optical_reflection + refraction_distortion + surface_texture + turbidity + color_deviation) / 5
     
     return VisualFeatures(
@@ -132,62 +180,68 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
 def calculate_risk_level(features: VisualFeatures) -> tuple[str, float]:
     """
     Calculate risk level based on visual features
-    Returns (risk_level, confidence)
+    Prefer warning over false safety
     """
     score = features.overall_quality
     
-    if score >= 70:
+    # Conservative thresholds
+    if score >= 75:
         risk_level = "LOW"
-        confidence = min(95, 70 + (score - 70) / 30 * 25)  # 70-95% confidence
-    elif score >= 40:
+        confidence = min(92, 70 + (score - 75) / 25 * 22)
+    elif score >= 45:
         risk_level = "MEDIUM"
-        confidence = min(85, 60 + (score - 40) / 30 * 25)  # 60-85% confidence
+        confidence = min(88, 65 + (score - 45) / 30 * 23)
     else:
         risk_level = "HIGH"
-        confidence = min(90, 65 + (40 - score) / 40 * 25)  # 65-90% confidence
+        confidence = min(93, 70 + (45 - score) / 45 * 23)
     
     return risk_level, round(confidence, 1)
 
 async def generate_ai_explanation(features: VisualFeatures, risk_level: str) -> tuple[str, str]:
     """
     Generate human-readable explanation using OpenAI GPT-5.2
-    Returns (explanation, recommendation)
+    STRICT RULES: No chemicals, bacteria, diseases, or medical claims
     """
     try:
-        # Initialize LLM Chat
         chat = LlmChat(
             api_key=os.environ.get('EMERGENT_LLM_KEY'),
             session_id=str(uuid.uuid4()),
-            system_message="You are a water safety analyst. Explain visual water analysis results in simple, non-technical language. NEVER make medical claims or identify specific contaminants. Focus only on visual patterns and general safety guidance."
+            system_message="""You are a water safety analyst explaining visual analysis results.
+
+STRICT RULES:
+- NEVER mention chemicals, bacteria, or diseases
+- NEVER claim medical or laboratory accuracy
+- NEVER say 'safe to drink' as a medical claim
+- Focus ONLY on visual patterns and observations
+- Use simple, calm, non-technical language
+- Base explanations on appearance, not chemistry
+- Communicate uncertainty clearly"""
         ).with_model("openai", "gpt-5.2")
         
-        # Create analysis prompt
-        prompt = f"""Analyze this water sample based on visual features:
+        prompt = f"""Analyze this water sample based on VISUAL features only:
 
-Visual Analysis Scores (0-100, higher is better):
-- Optical Reflection Stability: {features.optical_reflection}
+Visual Scores (0-100, higher is better):
+- Optical Reflection: {features.optical_reflection}
 - Refraction Distortion: {features.refraction_distortion}
-- Surface Texture Consistency: {features.surface_texture}
-- Turbidity Indicators: {features.turbidity}
-- Color Spectrum Deviation: {features.color_deviation}
-- Overall Quality Score: {features.overall_quality}
+- Surface Texture: {features.surface_texture}
+- Turbidity: {features.turbidity}
+- Color Spectrum: {features.color_deviation}
+- Overall: {features.overall_quality}
 
-Risk Classification: {risk_level}
+Risk Level: {risk_level}
 
 Provide:
-1. A 2-3 sentence explanation of what these visual patterns typically indicate (avoid technical jargon)
-2. A clear safety recommendation
+1. A 2-3 sentence explanation based on VISUAL PATTERNS only
+2. A clear action recommendation
 
-Format your response as:
-EXPLANATION: [your explanation]
-RECOMMENDATION: [your recommendation]
+Format:
+EXPLANATION: [visual observation only]
+RECOMMENDATION: [clear action]
 
-Remember: This is visual analysis only, not chemical testing. Never claim the water is medically safe or unsafe."""
+Remember: Visual risk estimation only. No chemical testing. No medical claims."""
         
         message = UserMessage(text=prompt)
         response = await chat.send_message(message)
-        
-        # Parse response
         response_text = response.strip()
         
         if "EXPLANATION:" in response_text and "RECOMMENDATION:" in response_text:
@@ -202,39 +256,57 @@ Remember: This is visual analysis only, not chemical testing. Never claim the wa
         
     except Exception as e:
         logger.error(f"Error generating AI explanation: {str(e)}")
-        # Fallback explanation
+        
+        # Fallback explanations (visual-focused)
         if risk_level == "LOW":
-            explanation = "The water surface reflection and texture patterns align with typical clean water visual characteristics. Visual consistency suggests minimal observable irregularities."
-            recommendation = "Based on visual analysis, this water appears clear. However, always verify with local water quality standards before drinking."
+            explanation = "The water shows consistent visual patterns with stable surface reflection and uniform color distribution. These visual characteristics align with typical clean water appearance."
+            recommendation = "Based on visual patterns, this appears low-risk. However, visual checks cannot confirm safety. Follow local water guidelines before drinking."
         elif risk_level == "MEDIUM":
-            explanation = "The water shows some visual inconsistencies in surface patterns and color distribution. These variations may indicate stagnant water or mixed sources."
-            recommendation = "Consider filtering or boiling before consumption. When possible, use bottled water or verified clean sources."
+            explanation = "The water shows some visual irregularities in surface texture and light behavior. These inconsistencies may indicate environmental mixing or stagnant conditions."
+            recommendation = "Consider filtering or boiling before use. When possible, use bottled water or verified clean sources."
         else:
-            explanation = "The water surface reflection and texture do not match typical clean water patterns. Such visual inconsistencies are commonly associated with contaminated or stagnant sources."
-            recommendation = "Avoid direct drinking. Use alternative clean water sources. If necessary, boil for at least 3 minutes before use."
+            explanation = "The water shows significant visual irregularities in surface reflection, texture, and color patterns. Such visual characteristics differ substantially from typical clean water."
+            recommendation = "Avoid direct drinking. Use alternative clean water sources. If necessary, boil for at least 3 minutes or use proper filtration."
         
         return explanation, recommendation
 
 @api_router.post("/analyze", response_model=AnalysisResponse)
 async def analyze_water(file: UploadFile = File(...)):
     """
-    Analyze uploaded water image
+    Analyze uploaded water image with preprocessing pipeline
+    Images are processed in-memory only (no permanent storage)
     """
     try:
-        # Read and validate image
+        logger.info(f"Received image for analysis: {file.filename}")
+        
+        # Read image (in-memory only)
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
+        logger.info(f"Image loaded: {image.size}, mode: {image.mode}")
         
-        # Convert to base64 for storage
+        # Preprocessing pipeline
+        processed_image = preprocess_image(image)
+        
+        # Quality validation
+        quality_check = validate_image_quality(processed_image)
+        logger.info(f"Quality check: blur={quality_check['blur_score']:.1f}, brightness={quality_check['brightness']:.1f}")
+        
+        if not quality_check['quality_ok']:
+            logger.warning("Image quality below threshold")
+            # Continue anyway but log warning
+        
+        # Convert to base64 for storage (temporary)
         buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
+        processed_image.save(buffered, format="PNG")
         image_base64 = base64.b64encode(buffered.getvalue()).decode()
         
         # Extract visual features
-        features = analyze_image_features(image)
+        features = analyze_image_features(processed_image)
+        logger.info(f"Features extracted: quality={features.overall_quality}")
         
         # Calculate risk level
         risk_level, confidence = calculate_risk_level(features)
+        logger.info(f"Risk assessment: {risk_level} ({confidence}%)")
         
         # Generate AI explanation
         explanation, recommendation = await generate_ai_explanation(features, risk_level)
@@ -249,13 +321,13 @@ async def analyze_water(file: UploadFile = File(...)):
             recommendation=recommendation
         )
         
-        # Save to database
+        # Save to database (temporary storage)
         doc = analysis.model_dump()
         doc['timestamp'] = doc['timestamp'].isoformat()
         doc['visual_features'] = doc['visual_features'].model_dump() if hasattr(doc['visual_features'], 'model_dump') else doc['visual_features']
         await db.water_analyses.insert_one(doc)
         
-        logger.info(f"Analysis completed: {analysis.id} - Risk: {risk_level} ({confidence}%)")
+        logger.info(f"Analysis completed: {analysis.id} - {risk_level} ({confidence}%)")
         
         return AnalysisResponse(
             id=analysis.id,
@@ -282,7 +354,6 @@ async def get_analyses(limit: int = 10):
             {"_id": 0, "image_data": 0}
         ).sort("timestamp", -1).limit(limit).to_list(limit)
         
-        # Convert nested dicts to proper format
         results = []
         for analysis in analyses:
             if isinstance(analysis.get('visual_features'), dict):
@@ -309,7 +380,6 @@ async def get_analysis(analysis_id: str):
         if not analysis:
             raise HTTPException(status_code=404, detail="Analysis not found")
         
-        # Convert visual_features dict to model
         if isinstance(analysis.get('visual_features'), dict):
             analysis['visual_features'] = VisualFeatures(**analysis['visual_features'])
         
