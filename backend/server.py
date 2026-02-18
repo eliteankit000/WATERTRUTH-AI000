@@ -1,7 +1,10 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import os
 import logging
 from pathlib import Path
@@ -24,7 +27,12 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # Create the main app without a prefix
-app = FastAPI()
+app = FastAPI(title="WaterTruth AI API", version="1.0.0")
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -271,7 +279,8 @@ Remember: Visual risk estimation only. No chemical testing. No medical claims.""
         return explanation, recommendation
 
 @api_router.post("/analyze", response_model=AnalysisResponse)
-async def analyze_water(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+async def analyze_water(request: Request, file: UploadFile = File(...)):
     """
     Analyze uploaded water image with preprocessing pipeline
     Images are processed in-memory only (no permanent storage)
