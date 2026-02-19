@@ -16,17 +16,20 @@ from PIL import Image, ImageEnhance, ImageFilter
 import io
 import base64
 import numpy as np
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from openai import AsyncOpenAI
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ.get('DB_NAME', 'watertruth_db')]
 
-# Create the main app without a prefix
+# OpenAI client
+openai_client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+
+# Create the main app
 app = FastAPI(title="WaterTruth AI API", version="1.0.0")
 
 # Rate limiting
@@ -78,20 +81,17 @@ class AnalysisResponse(BaseModel):
 def preprocess_image(image: Image.Image) -> Image.Image:
     """
     Image standardization pipeline:
-    1. White balance correction (simplified)
+    1. White balance correction
     2. Contrast normalization
     3. Noise reduction
     """
     logger.info("Starting image preprocessing")
     
-    # Convert to RGB if needed
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
-    # 1. Auto white balance (simplified histogram stretching)
+    # Auto white balance
     img_array = np.array(image).astype(float)
-    
-    # Stretch each channel to full range
     for i in range(3):
         channel = img_array[:, :, i]
         channel_min = np.percentile(channel, 5)
@@ -103,11 +103,11 @@ def preprocess_image(image: Image.Image) -> Image.Image:
     
     image = Image.fromarray(img_array.astype(np.uint8))
     
-    # 2. Contrast normalization
+    # Contrast normalization
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(1.2)
     
-    # 3. Noise reduction (Gaussian blur)
+    # Noise reduction
     image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
     
     logger.info("Image preprocessing completed")
@@ -116,9 +116,8 @@ def preprocess_image(image: Image.Image) -> Image.Image:
 def validate_image_quality(image: Image.Image) -> dict:
     """
     Validate image quality before analysis
-    Returns quality metrics and pass/fail
     """
-    img_array = np.array(image.convert('L'))  # Convert to grayscale
+    img_array = np.array(image.convert('L'))
     
     # Blur detection (Laplacian variance)
     laplacian = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
@@ -129,11 +128,7 @@ def validate_image_quality(image: Image.Image) -> dict:
             laplacian_result[i, j] = np.sum(img_array[i-1:i+2, j-1:j+2] * laplacian)
     
     blur_score = np.var(laplacian_result)
-    
-    # Exposure check
     brightness = np.mean(img_array)
-    
-    # Determine quality
     is_quality_ok = blur_score > 50 and 40 < brightness < 240
     
     return {
@@ -146,11 +141,9 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
     """
     Extract visual features from preprocessed water image
     """
-    # Resize for consistent analysis
     image = image.resize((224, 224))
     img_array = np.array(image)
     
-    # Extract basic color statistics
     r_mean = np.mean(img_array[:, :, 0])
     g_mean = np.mean(img_array[:, :, 1])
     b_mean = np.mean(img_array[:, :, 2])
@@ -163,13 +156,11 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
     color_balance = abs(r_mean - g_mean) + abs(g_mean - b_mean) + abs(b_mean - r_mean)
     brightness = (r_mean + g_mean + b_mean) / 3
     
-    # Visual feature scores (0-100, higher = better water quality)
     optical_reflection = min(100, max(0, (brightness / 255) * 100 - (total_var / 100)))
     refraction_distortion = min(100, max(0, 100 - (color_balance / 2)))
     surface_texture = min(100, max(0, 100 - (total_var / 50)))
     turbidity = min(100, max(0, (brightness / 255) * 100 - (total_var / 80)))
     
-    # Color deviation from clear water
     ideal_clear_water = np.array([180, 200, 220])
     color_diff = np.sqrt(np.sum((np.array([r_mean, g_mean, b_mean]) - ideal_clear_water) ** 2))
     color_deviation = min(100, max(0, 100 - (color_diff / 3)))
@@ -188,11 +179,9 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
 def calculate_risk_level(features: VisualFeatures) -> tuple[str, float]:
     """
     Calculate risk level based on visual features
-    Prefer warning over false safety
     """
     score = features.overall_quality
     
-    # Conservative thresholds
     if score >= 75:
         risk_level = "LOW"
         confidence = min(92, 70 + (score - 75) / 25 * 22)
@@ -207,14 +196,10 @@ def calculate_risk_level(features: VisualFeatures) -> tuple[str, float]:
 
 async def generate_ai_explanation(features: VisualFeatures, risk_level: str) -> tuple[str, str]:
     """
-    Generate human-readable explanation using OpenAI GPT-5.2
-    STRICT RULES: No chemicals, bacteria, diseases, or medical claims
+    Generate human-readable explanation using OpenAI
     """
     try:
-        chat = LlmChat(
-            api_key=os.environ.get('EMERGENT_LLM_KEY'),
-            session_id=str(uuid.uuid4()),
-            system_message="""You are a water safety analyst explaining visual analysis results.
+        system_message = """You are a water safety analyst explaining visual analysis results.
 
 STRICT RULES:
 - NEVER mention chemicals, bacteria, or diseases
@@ -224,7 +209,6 @@ STRICT RULES:
 - Use simple, calm, non-technical language
 - Base explanations on appearance, not chemistry
 - Communicate uncertainty clearly"""
-        ).with_model("openai", "gpt-5.2")
         
         prompt = f"""Analyze this water sample based on VISUAL features only:
 
@@ -248,9 +232,17 @@ RECOMMENDATION: [clear action]
 
 Remember: Visual risk estimation only. No chemical testing. No medical claims."""
         
-        message = UserMessage(text=prompt)
-        response = await chat.send_message(message)
-        response_text = response.strip()
+        response = await openai_client.chat.completions.create(
+            model=os.environ.get('OPENAI_MODEL', 'gpt-4o-mini'),
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=300
+        )
+        
+        response_text = response.choices[0].message.content.strip()
         
         if "EXPLANATION:" in response_text and "RECOMMENDATION:" in response_text:
             parts = response_text.split("RECOMMENDATION:")
@@ -265,7 +257,7 @@ Remember: Visual risk estimation only. No chemical testing. No medical claims.""
     except Exception as e:
         logger.error(f"Error generating AI explanation: {str(e)}")
         
-        # Fallback explanations (visual-focused)
+        # Fallback explanations
         if risk_level == "LOW":
             explanation = "The water shows consistent visual patterns with stable surface reflection and uniform color distribution. These visual characteristics align with typical clean water appearance."
             recommendation = "Based on visual patterns, this appears low-risk. However, visual checks cannot confirm safety. Follow local water guidelines before drinking."
@@ -282,29 +274,23 @@ Remember: Visual risk estimation only. No chemical testing. No medical claims.""
 @limiter.limit("10/minute")
 async def analyze_water(request: Request, file: UploadFile = File(...)):
     """
-    Analyze uploaded water image with preprocessing pipeline
-    Images are processed in-memory only (no permanent storage)
+    Analyze uploaded water image
     """
     try:
         logger.info(f"Received image for analysis: {file.filename}")
         
-        # Read image (in-memory only)
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         logger.info(f"Image loaded: {image.size}, mode: {image.mode}")
         
-        # Preprocessing pipeline
+        # Preprocessing
         processed_image = preprocess_image(image)
         
         # Quality validation
         quality_check = validate_image_quality(processed_image)
         logger.info(f"Quality check: blur={quality_check['blur_score']:.1f}, brightness={quality_check['brightness']:.1f}")
         
-        if not quality_check['quality_ok']:
-            logger.warning("Image quality below threshold")
-            # Continue anyway but log warning
-        
-        # Convert to base64 for storage (temporary)
+        # Convert to base64
         buffered = io.BytesIO()
         processed_image.save(buffered, format="PNG")
         image_base64 = base64.b64encode(buffered.getvalue()).decode()
@@ -330,7 +316,7 @@ async def analyze_water(request: Request, file: UploadFile = File(...)):
             recommendation=recommendation
         )
         
-        # Save to database (temporary storage)
+        # Save to database
         doc = analysis.model_dump()
         doc['timestamp'] = doc['timestamp'].isoformat()
         doc['visual_features'] = doc['visual_features'].model_dump() if hasattr(doc['visual_features'], 'model_dump') else doc['visual_features']
@@ -355,7 +341,7 @@ async def analyze_water(request: Request, file: UploadFile = File(...)):
 @api_router.get("/analyses", response_model=List[AnalysisResponse])
 async def get_analyses(limit: int = 10):
     """
-    Get recent analyses (without image data for performance)
+    Get recent analyses
     """
     try:
         analyses = await db.water_analyses.find(
@@ -378,7 +364,7 @@ async def get_analyses(limit: int = 10):
 @api_router.get("/analyses/{analysis_id}")
 async def get_analysis(analysis_id: str):
     """
-    Get specific analysis with image
+    Get specific analysis
     """
     try:
         analysis = await db.water_analyses.find_one(
@@ -404,7 +390,7 @@ async def get_analysis(analysis_id: str):
 async def health_check():
     return {"status": "healthy", "service": "WaterTruth AI"}
 
-# Add CORS middleware first
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -413,7 +399,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the router in the main app
+# Include the router
 app.include_router(api_router)
 
 @app.on_event("shutdown")
