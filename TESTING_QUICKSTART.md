@@ -213,4 +213,15 @@ pkill ngrok
 5. Check PWA installation
 6. Done! 🎉
 
-**Need more help?** Check: `/app/LOCAL_MOBILE_TESTING_GUIDE.md`
+**Need more help?** Check: `LOCAL_MOBILE_TESTING_GUIDE.md`
+
+## API Key Setup
+
+Before testing, make sure you have your OpenAI API key configured:
+
+1. Get API key from: https://platform.openai.com/api-keys
+2. Update `/app/backend/.env`:
+   ```
+   OPENAI_API_KEY=sk-your-key-here
+   ```
+3. Restart backend: `sudo supervisorctl restart backend`
