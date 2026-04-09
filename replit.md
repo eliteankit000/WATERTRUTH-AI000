@@ -1,45 +1,84 @@
 # WaterTruth AI
 
-A mobile-first Progressive Web App (PWA) for visual water safety risk estimation using AI (OpenAI GPT-4o-mini).
+A mobile-first Progressive Web App (PWA) for AI-powered visual water safety risk estimation.
 
-## Architecture
+## Tech Stack
 
-- **Frontend**: React 19 + CRACO, Tailwind CSS, shadcn/ui, Framer Motion — runs on port 5000
-- **Backend**: FastAPI (Python) + MongoDB (motor) + OpenAI API — runs on port 8000
-- **Database**: MongoDB (local, running via mongod with data at /tmp/mongodb-data)
+- **Frontend**: React 19 + CRACO, Tailwind CSS, shadcn/ui, Framer Motion — port 5000 (dev)
+- **Backend**: FastAPI + Motor (MongoDB async) + OpenAI API — port 8000 (dev)
+- **Database**: MongoDB (local in dev via mongod, MongoDB Atlas recommended for production)
 
 ## Project Structure
 
 ```
 watertruth-ai/
 ├── backend/
-│   ├── server.py          # FastAPI app with image analysis routes
-│   ├── .env               # Backend config (MONGO_URL, OPENAI_API_KEY, etc.)
-│   └── requirements.txt   # Python dependencies
+│   ├── server.py           # FastAPI app — analysis routes + serves React build in prod
+│   ├── requirements.txt    # Clean production Python deps
+│   ├── gunicorn.conf.py    # Gunicorn production config
+│   └── .env                # Local secrets (MONGO_URL, OPENAI_API_KEY)
 ├── frontend/
-│   ├── src/               # React source
-│   ├── .env               # Frontend env (REACT_APP_BACKEND_URL, PORT=5000)
-│   ├── craco.config.js    # CRACO config (allowedHosts: all, host: 0.0.0.0)
-│   └── package.json       # Node dependencies (yarn)
-├── start_backend.sh       # Starts MongoDB + uvicorn backend
-└── replit.md
+│   ├── src/
+│   │   ├── components/CameraScanner.jsx   # Camera + image capture
+│   │   ├── pages/Results.jsx              # Analysis results display
+│   │   └── pages/Home.jsx                 # Landing page
+│   ├── .env                # PORT=5000, HOST=0.0.0.0, REACT_APP_BACKEND_URL=
+│   ├── package.json        # proxy: localhost:8000 for dev
+│   └── craco.config.js     # allowedHosts:all, host:0.0.0.0
+├── render.yaml             # Render.com deployment config
+├── Procfile                # Alternative start command
+└── start_backend.sh        # Replit dev: starts MongoDB + uvicorn
 ```
 
-## Workflows
+## Replit Dev Workflows
 
 - **Start application**: `cd frontend && PORT=5000 yarn start` → port 5000 (webview)
-- **Backend**: `bash start_backend.sh` → starts MongoDB + FastAPI on port 8000
+- **Backend**: `bash start_backend.sh` → MongoDB fork + FastAPI on port 8000
 
-## Environment Variables
+## How API Calls Work
 
-- `REACT_APP_BACKEND_URL`: URL to backend (set in frontend/.env)
-- `OPENAI_API_KEY`: Required for AI analysis (set in backend/.env or as Replit secret)
-- `MONGO_URL`: MongoDB connection string (default: mongodb://localhost:27017)
-- `DB_NAME`: MongoDB database name (default: watertruth_db)
+- **Development**: Frontend (port 5000) proxies `/api/*` to backend (port 8000) via `"proxy"` in package.json. `REACT_APP_BACKEND_URL` is empty.
+- **Production**: FastAPI serves the React `build/` as static files. All `/api/*` hits FastAPI directly. No proxy needed.
 
-## Key Notes
+## Deploy to Render.com
 
-- Frontend uses CRACO (Create React App Configuration Override) with `allowedHosts: all` to work behind Replit's proxy
-- MongoDB runs locally with `--fork` flag in the backend startup script
-- The `ajv` package (v8) is required in frontend/node_modules to fix a dependency conflict with react-scripts
-- Motor v3.6.0 + PyMongo v4.9.2 are needed (motor 3.3.1 is incompatible with newer pymongo)
+### Prerequisites
+1. MongoDB Atlas free cluster — get a connection string (`mongodb+srv://...`)
+2. OpenAI API key
+
+### Steps
+1. Push to GitHub
+2. Create new **Web Service** on Render, connect repo
+3. Render auto-detects `render.yaml` — it sets build/start commands automatically
+4. Set these **Environment Variables** in Render dashboard:
+   - `MONGO_URL` → your MongoDB Atlas connection string
+   - `OPENAI_API_KEY` → your OpenAI key
+5. Deploy — single service handles both frontend and backend
+
+### Build command (auto from render.yaml)
+```
+pip install -r backend/requirements.txt && cd frontend && npm install --legacy-peer-deps && npm run build
+```
+
+### Start command (auto from render.yaml)
+```
+cd backend && gunicorn server:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+```
+
+## Analysis Pipeline
+
+1. **Camera capture** — mobile camera via `getUserMedia`, auto-captures when quality ≥ 40%
+2. **Image preprocessing** — white balance, contrast normalisation, Gaussian denoise
+3. **Quality validation** — numpy Laplacian blur detection + brightness check
+4. **Feature extraction** — optical reflection, turbidity, surface texture, colour deviation
+5. **Risk classification** — overall quality score → LOW / MEDIUM / HIGH
+6. **AI explanation** — GPT-4o-mini generates human-readable observation + recommendation
+7. **MongoDB storage** — analysis saved with UUID, retrievable by ID
+
+## Key Config Notes
+
+- Frontend uses `REACT_APP_BACKEND_URL = ''` so API calls use relative paths (`/api/...`)
+- `"proxy": "http://localhost:8000"` in frontend/package.json enables dev proxying
+- FastAPI mounts React `build/` as static files when `frontend/build/` exists
+- CORS is set to `allow_origins=["*"]` — restrict to your domain in strict prod environments
+- `validate_image_quality` uses numpy vectorised Laplacian (fast) — no Python loops
