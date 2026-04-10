@@ -36,6 +36,10 @@ DB_NAME   = os.environ.get('DB_NAME', 'watertruth_db')
 mongo_client: Optional[AsyncIOMotorClient] = None
 db = None
 
+# ─── IN-MEMORY FALLBACK STORE ─────────────────────────────────────────────────
+# Used automatically when MongoDB is unavailable — app never returns 503
+_memory_store: dict = {}
+
 # ─── OpenAI ───────────────────────────────────────────────────────────────────
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '').strip()
 openai_client: Optional[AsyncOpenAI] = None
@@ -69,20 +73,21 @@ api_router = APIRouter(prefix="/api")
 async def startup():
     global mongo_client, db
     try:
+        # FIX 1: Add tlsAllowInvalidCertificates to solve Render SSL error
         mongo_client = AsyncIOMotorClient(
             MONGO_URL,
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
+            socketTimeoutMS=5000,
+            tlsAllowInvalidCertificates=True,   # ← fixes SSL handshake on Render
         )
-        # Verify connection is live
         await mongo_client.admin.command("ping")
         db = mongo_client[DB_NAME]
-        # Create index for fast ID lookups
         await db.water_analyses.create_index("id", unique=True, background=True)
         logger.info(f"MongoDB connected: {MONGO_URL[:40]}...")
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
-        logger.warning("App will start but database operations will fail until MongoDB is reachable")
+        logger.warning("Running with IN-MEMORY storage — analyses will not persist across restarts")
         mongo_client = None
         db = None
 
@@ -94,13 +99,52 @@ async def shutdown():
         logger.info("MongoDB connection closed")
 
 
-def get_db():
-    if db is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Database not connected. Check MONGO_URL environment variable."
-        )
-    return db
+# ─── FIX 2: DB helpers — NEVER raise 503, always fall back to memory ─────────
+
+async def _save_analysis(doc: dict) -> None:
+    """Save to MongoDB if available, otherwise save to memory store."""
+    if db is not None:
+        try:
+            await db.water_analyses.insert_one(doc)
+            return
+        except Exception as e:
+            logger.error(f"MongoDB write failed, falling back to memory: {e}")
+    # Fallback: store in memory
+    _memory_store[doc["id"]] = doc
+    logger.info(f"Saved to memory store: {doc['id']}")
+
+
+async def _get_analysis_by_id(analysis_id: str) -> Optional[dict]:
+    """Fetch from MongoDB if available, otherwise from memory."""
+    if db is not None:
+        try:
+            doc = await db.water_analyses.find_one({"id": analysis_id}, {"_id": 0})
+            if doc:
+                return doc
+        except Exception as e:
+            logger.error(f"MongoDB read failed, trying memory: {e}")
+    # Fallback: check memory
+    return _memory_store.get(analysis_id)
+
+
+async def _get_recent_analyses(limit: int) -> list:
+    """Fetch recent analyses from MongoDB or memory."""
+    if db is not None:
+        try:
+            docs = await db.water_analyses.find(
+                {}, {"_id": 0, "image_data": 0}
+            ).sort("timestamp", -1).limit(max(1, min(limit, 100))).to_list(None)
+            return docs
+        except Exception as e:
+            logger.error(f"MongoDB list failed, using memory: {e}")
+    # Fallback: return memory store sorted by timestamp
+    items = sorted(
+        _memory_store.values(),
+        key=lambda x: x.get("timestamp", ""),
+        reverse=True
+    )
+    # Strip image_data to match DB behaviour
+    return [{k: v for k, v in item.items() if k != "image_data"} for item in items[:limit]]
 
 
 # ─── Models ───────────────────────────────────────────────────────────────────
@@ -158,11 +202,6 @@ def preprocess_image(image: Image.Image) -> Image.Image:
 
 
 def validate_image_quality(image: Image.Image) -> dict:
-    """
-    Fast quality check via numpy Laplacian.
-    Thresholds are intentionally lenient — camera images vary widely.
-    A uniform surface (calm clear water) naturally has low edge variance.
-    """
     gray = np.array(image.convert('L'), dtype=float)
     lap = (
           4 * gray[1:-1, 1:-1]
@@ -171,22 +210,20 @@ def validate_image_quality(image: Image.Image) -> dict:
         - gray[1:-1, :-2]
         - gray[1:-1,  2:]
     )
-    blur_score  = float(np.var(lap))
-    brightness  = float(np.mean(gray))
-    # Very lenient: accept almost anything a real camera would produce
-    quality_ok  = brightness > 15 and brightness < 248
+    blur_score = float(np.var(lap))
+    brightness = float(np.mean(gray))
+    quality_ok = brightness > 15 and brightness < 248
     return {'blur_score': blur_score, 'brightness': brightness, 'quality_ok': quality_ok}
 
 
 def analyze_image_features(image: Image.Image) -> VisualFeatures:
-    """Extract visual quality scores from the preprocessed image."""
     img = np.array(image.resize((224, 224)), dtype=float)
 
     r, g, b = img[:, :, 0], img[:, :, 1], img[:, :, 2]
     r_mean, g_mean, b_mean = r.mean(), g.mean(), b.mean()
     r_var,  g_var,  b_var  = r.var(),  g.var(),  b.var()
-    total_var = (r_var + g_var + b_var) / 3
-    brightness = (r_mean + g_mean + b_mean) / 3
+    total_var    = (r_var + g_var + b_var) / 3
+    brightness   = (r_mean + g_mean + b_mean) / 3
     color_balance = abs(r_mean - g_mean) + abs(g_mean - b_mean) + abs(b_mean - r_mean)
 
     optical_reflection    = float(np.clip((brightness / 255) * 100 - (total_var / 100), 0, 100))
@@ -194,7 +231,7 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
     surface_texture       = float(np.clip(100 - (total_var / 50),                       0, 100))
     turbidity             = float(np.clip((brightness / 255) * 100 - (total_var / 80),  0, 100))
 
-    ideal     = np.array([180.0, 200.0, 220.0])
+    ideal      = np.array([180.0, 200.0, 220.0])
     color_diff = float(np.sqrt(np.sum((np.array([r_mean, g_mean, b_mean]) - ideal) ** 2)))
     color_deviation = float(np.clip(100 - (color_diff / 3), 0, 100))
 
@@ -214,14 +251,11 @@ def analyze_image_features(image: Image.Image) -> VisualFeatures:
 def calculate_risk_level(features: VisualFeatures) -> tuple[str, float]:
     score = features.overall_quality
     if score >= 70:
-        risk  = "LOW"
-        conf  = min(93, 70 + (score - 70) / 30 * 23)
+        risk = "LOW";    conf = min(93, 70 + (score - 70) / 30 * 23)
     elif score >= 40:
-        risk  = "MEDIUM"
-        conf  = min(88, 65 + (score - 40) / 30 * 23)
+        risk = "MEDIUM"; conf = min(88, 65 + (score - 40) / 30 * 23)
     else:
-        risk  = "HIGH"
-        conf  = min(93, 70 + (40 - score) / 40 * 23)
+        risk = "HIGH";   conf = min(93, 70 + (40 - score) / 40 * 23)
     return risk, round(conf, 1)
 
 
@@ -250,9 +284,7 @@ def _fallback_explanation(risk_level: str) -> tuple[str, str]:
 
 
 async def generate_ai_explanation(features: VisualFeatures, risk_level: str) -> tuple[str, str]:
-    """Call OpenAI for explanation; fall back to rule-based text if key is absent or call fails."""
     if not openai_client:
-        logger.info("Skipping OpenAI call — no API key configured")
         return _fallback_explanation(risk_level)
 
     try:
@@ -296,7 +328,7 @@ async def generate_ai_explanation(features: VisualFeatures, risk_level: str) -> 
         )
         text = response.choices[0].message.content.strip()
         if "EXPLANATION:" in text and "RECOMMENDATION:" in text:
-            parts = text.split("RECOMMENDATION:")
+            parts          = text.split("RECOMMENDATION:")
             explanation    = parts[0].replace("EXPLANATION:", "").strip()
             recommendation = parts[1].strip()
         else:
@@ -313,21 +345,25 @@ async def generate_ai_explanation(features: VisualFeatures, risk_level: str) -> 
 
 @api_router.get("/health")
 async def health_check():
-    db_status = "connected" if db is not None else "disconnected"
+    db_status = "connected" if db is not None else "disconnected (using memory fallback)"
     ai_status = "configured" if openai_client else "not configured (fallback active)"
     return {
         "status": "healthy",
         "service": "WaterTruth AI",
         "database": db_status,
         "ai": ai_status,
+        "memory_store_count": len(_memory_store),
     }
 
 
 @api_router.post("/analyze", response_model=AnalysisResponse)
 @limiter.limit("20/minute")
 async def analyze_water(request: Request, file: UploadFile = File(...)):
-    """Analyse an uploaded water image and return risk classification."""
-    database = get_db()
+    """
+    Analyse an uploaded water image and return risk classification.
+    FIX: Never returns 503 — works with in-memory store if MongoDB is down.
+    """
+    # FIX 3: Removed get_db() call — no more hard crash at the top of this function
 
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be an image")
@@ -340,7 +376,7 @@ async def analyze_water(request: Request, file: UploadFile = File(...)):
         try:
             image = Image.open(io.BytesIO(contents))
             image.verify()
-            image = Image.open(io.BytesIO(contents))  # re-open after verify
+            image = Image.open(io.BytesIO(contents))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid or corrupted image file")
 
@@ -355,12 +391,11 @@ async def analyze_water(request: Request, file: UploadFile = File(...)):
             f"ok={quality['quality_ok']}"
         )
 
-        # Store base64 of processed image
         buf = io.BytesIO()
         processed.save(buf, format="JPEG", quality=80)
         image_b64 = base64.b64encode(buf.getvalue()).decode()
 
-        features = analyze_image_features(processed)
+        features   = analyze_image_features(processed)
         logger.info(f"Features: {features.model_dump()}")
 
         risk_level, confidence = calculate_risk_level(features)
@@ -379,11 +414,12 @@ async def analyze_water(request: Request, file: UploadFile = File(...)):
 
         doc = analysis.model_dump()
         doc['timestamp'] = doc['timestamp'].isoformat()
-        if hasattr(doc['visual_features'], 'model_dump'):
+        if hasattr(doc.get('visual_features'), 'model_dump'):
             doc['visual_features'] = doc['visual_features'].model_dump()
 
-        await database.water_analyses.insert_one(doc)
-        logger.info(f"Saved analysis: {analysis.id} → {risk_level} ({confidence}%)")
+        # FIX 4: Use helper — saves to MongoDB or memory, never raises
+        await _save_analysis(doc)
+        logger.info(f"Analysis complete: {analysis.id} → {risk_level} ({confidence}%)")
 
         return AnalysisResponse(
             id=analysis.id,
@@ -404,20 +440,14 @@ async def analyze_water(request: Request, file: UploadFile = File(...)):
 
 @api_router.get("/analyses", response_model=List[AnalysisResponse])
 async def get_analyses(limit: int = 10):
-    database = get_db()
     try:
-        docs = await database.water_analyses.find(
-            {}, {"_id": 0, "image_data": 0}
-        ).sort("timestamp", -1).limit(max(1, min(limit, 100))).to_list(None)
-
+        docs = await _get_recent_analyses(limit)
         results = []
         for doc in docs:
             if isinstance(doc.get('visual_features'), dict):
                 doc['visual_features'] = VisualFeatures(**doc['visual_features'])
             results.append(AnalysisResponse(**doc))
         return results
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error fetching analyses: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -425,9 +455,8 @@ async def get_analyses(limit: int = 10):
 
 @api_router.get("/analyses/{analysis_id}")
 async def get_analysis(analysis_id: str):
-    database = get_db()
     try:
-        doc = await database.water_analyses.find_one({"id": analysis_id}, {"_id": 0})
+        doc = await _get_analysis_by_id(analysis_id)
         if not doc:
             raise HTTPException(status_code=404, detail="Analysis not found")
         if isinstance(doc.get('visual_features'), dict):
@@ -444,18 +473,16 @@ async def get_analysis(analysis_id: str):
 app.include_router(api_router)
 
 
-# ─── Serve React build (production only) ─────────────────────────────────────
-STATIC_DIR = ROOT_DIR.parent / "frontend" / "build"
+# ─── Serve React build (production only) ──────────────────────────────────────
+STATIC_DIR    = ROOT_DIR.parent / "frontend" / "build"
 STATIC_ASSETS = STATIC_DIR / "static"
 
 if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
     logger.info(f"Serving React build from {STATIC_DIR}")
 
-    # Serve /static/** assets (CSS, JS, media)
     if STATIC_ASSETS.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_ASSETS)), name="react-static")
 
-    # Serve manifest, favicon, service-worker etc from build root
     @app.get("/manifest.json")
     async def manifest():
         return FileResponse(str(STATIC_DIR / "manifest.json"))
@@ -468,7 +495,6 @@ if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
     async def service_worker():
         return FileResponse(str(STATIC_DIR / "service-worker.js"))
 
-    # React Router catch-all — must be last
     @app.get("/{full_path:path}")
     async def serve_react(full_path: str):
         return FileResponse(str(STATIC_DIR / "index.html"))
