@@ -13,8 +13,8 @@ const QUALITY_THRESHOLDS = {
   BLUR_MIN: 20,
   BRIGHTNESS_MIN: 20,
   BRIGHTNESS_MAX: 245,
-  AUTO_CAPTURE_QUALITY: 55,   // raised — only capture when confident
-  WATER_CONFIDENCE_MIN: 50,   // raised from 20 → must actually look like water
+  AUTO_CAPTURE_QUALITY: 60,
+  WATER_CONFIDENCE_MIN: 60,  // stricter threshold
 };
 
 // ─── Image compression ────────────────────────────────────────────────────────
@@ -59,63 +59,120 @@ function rgbToHsv(r, g, b) {
   return { h, s: max === 0 ? 0 : d / max, v: max };
 }
 
-// ─── REAL WATER DETECTOR ──────────────────────────────────────────────────────
+// ─── WATER DETECTOR ───────────────────────────────────────────────────────────
 /**
- * Detects ALL water types: clear tap, ocean, river, nala, muddy, stagnant, flood.
- * Returns confidence 0-100.
+ * KEY FIX: The old isDarkMurky matched ANY grey surface (walls, cement, floors).
  *
- * Signals used:
- *  1. Water-colour pixels  (blue/teal/brown/grey/dark/murky/foam)
- *  2. Non-water exclusion  (skin, vivid grass, vivid red, bright yellow)
- *  3. Horizontal uniformity (water surfaces are horizontally consistent)
- *  4. Texture check         (water has low-medium texture, not cloth/grass)
+ * The discriminator that actually separates water from non-water:
+ *   → Water (even dirty/dark) has b >= r * 0.85  (cool or neutral tint)
+ *   → Cement/concrete/walls always have b < r * 0.85  (warm grey tint)
+ *
+ * Water colour profiles supported:
+ *   1. Blue ocean/pool/lake        — h:175-245, s:0.20-0.90
+ *   2. Clear/tap water (blue-grey) — h:170-260, s:0.03-0.25, cool tint
+ *   3. Brown/muddy river/nala      — h:10-45,   s:0.20-0.75, v:0.08-0.68
+ *   4. Green stagnant/algae        — h:75-160,  s:0.12-0.58
+ *   5. White foam / rapids         — s<0.12, v>0.82
+ *   6. Dark flood/dirty water      — s<0.22, v<0.42, AND b >= r*0.85 (COOL tint only)
+ *
+ * Explicitly EXCLUDED:
+ *   - Warm grey cement/concrete   b < r*0.88  ← THIS WAS THE BUG
+ *   - Neutral grey walls/floors   b < r*0.90 with s<0.10
+ *   - Skin tones
+ *   - Vivid grass/plants
+ *   - Bright warm red/orange/yellow
  */
 function detectWater(imageData) {
   const { data, width, height } = imageData;
   const total = width * height;
-  const step  = 4; // sample every 4th pixel
+  const step = 4;
 
-  let waterPixels = 0, nonWaterPixels = 0;
+  let waterPx = 0, excludedPx = 0, sampledPx = 0;
 
   for (let i = 0; i < data.length; i += 4 * step) {
-    const r = data[i], g = data[i + 1], b = data[i + 2];
-    const { h, s, v } = rgbToHsv(r, g, b);
+    const R = data[i], G = data[i + 1], B = data[i + 2];
+    const { h, s, v } = rgbToHsv(R, G, B);
+
+    // ── THE KEY DISCRIMINATOR ────────────────────────────────────────────
+    // Water has cool/neutral tint: blue channel is NOT much lower than red.
+    // Cement walls/floors are WARM grey: blue is noticeably lower than red.
+    const hasCoolTint = B >= R * 0.85;   // true for water, false for cement
+    const hasWarmTint = B < R * 0.84;    // true for walls/floors/warm surfaces
 
     // ── Water colour ranges ──────────────────────────────────────────────
-    const isClearWater  = s < 0.35 && v > 0.2  && v < 0.95 && h >= 170 && h <= 260;   // tap/clear
-    const isBlueWater   = h >= 175 && h <= 255  && s >= 0.15 && s <= 0.85 && v > 0.15; // ocean/pool
-    const isBrownWater  = h >= 10  && h <= 50   && s >= 0.15 && s <= 0.75 && v >= 0.1 && v <= 0.75; // river/nala
-    const isDarkMurky   = s < 0.25 && v < 0.55  && v > 0.05;                           // dirty/flood
-    const isGreenWater  = h >= 60  && h <= 160  && s >= 0.1  && s <= 0.6  && v >= 0.1 && v <= 0.7;  // stagnant/algae
-    const isFoam        = s < 0.15 && v > 0.75;                                        // rapids/foam
 
-    // ── Non-water exclusions ─────────────────────────────────────────────
-    const isSkin        = h >= 0   && h <= 30   && s >= 0.25 && s <= 0.75 && v >= 0.4;  // skin tones
-    const isGrass       = h >= 80  && h <= 150  && s >= 0.35 && v >= 0.2;               // grass/plants
-    const isVividRed    = (h <= 10 || h >= 340) && s >= 0.4;                            // red walls/objects
-    const isYellow      = h >= 45  && h <= 75   && s >= 0.5  && v >= 0.6;               // bright yellow
+    // 1. Blue water — ocean, pool, lake, sky reflection
+    const isBlueWater = h >= 175 && h <= 245 && s >= 0.20 && s <= 0.90 && v >= 0.10;
 
-    const isWater    = isClearWater || isBlueWater || isBrownWater ||
-                       isDarkMurky  || isGreenWater || isFoam;
-    const isNotWater = isSkin || isGrass || isVividRed || isYellow;
+    // 2. Clear/tap water — blue-grey, low saturation, MUST have cool tint
+    const isClearWater = h >= 170 && h <= 260 && s >= 0.03 && s <= 0.25
+                      && v >= 0.20 && v <= 0.92 && hasCoolTint;
 
-    if (isWater && !isNotWater) waterPixels++;
-    else if (isNotWater) nonWaterPixels++;
+    // 3. Brown/muddy water — river, nala, flooded drain — requires real saturation
+    const isBrownWater = h >= 10 && h <= 45 && s >= 0.22 && s <= 0.75
+                      && v >= 0.08 && v <= 0.68;
+
+    // 4. Green stagnant water — algae, pond, tank
+    const isGreenWater = h >= 75 && h <= 160 && s >= 0.12 && s <= 0.58
+                      && v >= 0.08 && v <= 0.68;
+
+    // 5. White foam — rapids, churned water
+    const isFoam = s < 0.12 && v > 0.82;
+
+    // 6. Dark flood/dirty water — ONLY if cool tint (not warm grey!)
+    //    This is what was matching walls before. Now gated by hasCoolTint.
+    const isDarkWater = s < 0.22 && v >= 0.04 && v <= 0.42 && hasCoolTint;
+
+    // ── EXCLUSIONS ───────────────────────────────────────────────────────
+
+    // Cement, concrete, plaster walls — warm grey (B < R), low saturation
+    const isCement = hasWarmTint && s < 0.20 && v >= 0.20 && v <= 0.80;
+
+    // Neutral grey walls/floors with no cool tint
+    const isNeutralWall = s < 0.10 && v >= 0.20 && v <= 0.82 && !hasCoolTint;
+
+    // Skin tones — warm, medium saturation, medium-high value
+    const isSkin = h >= 0 && h <= 32 && s >= 0.22 && s <= 0.78 && v >= 0.35;
+
+    // Vivid grass / leaves / plants
+    const isGrass = h >= 80 && h <= 150 && s >= 0.40 && v >= 0.18;
+
+    // Bright warm red/orange (painted walls, objects)
+    const isRedOrange = (h <= 15 || h >= 345) && s >= 0.40;
+
+    // Bright yellow (not water)
+    const isYellow = h >= 45 && h <= 75 && s >= 0.50 && v >= 0.58;
+
+    // Beige/tan walls and floors
+    const isBeige = h >= 22 && h <= 58 && s >= 0.08 && s <= 0.35
+                  && v >= 0.40 && v <= 0.88 && hasWarmTint;
+
+    const isWater = isBlueWater || isClearWater || isBrownWater
+                  || isGreenWater || isFoam || isDarkWater;
+
+    const isExcluded = isCement || isNeutralWall || isSkin
+                     || isGrass || isRedOrange || isYellow || isBeige;
+
+    sampledPx++;
+    if (isWater && !isExcluded) waterPx++;
+    else if (isExcluded)        excludedPx++;
   }
 
-  const sampled     = Math.floor(total / step);
-  const waterRatio  = waterPixels    / sampled;
-  const badRatio    = nonWaterPixels / sampled;
+  const waterRatio   = waterPx    / sampledPx;
+  const excludeRatio = excludedPx / sampledPx;
 
-  // Need ≥25% water-coloured pixels to consider it water
-  const colourScore   = Math.min(100, (waterRatio / 0.40) * 100);
-  const penaltyFactor = Math.max(0, 1 - badRatio * 2.5);
+  // Hard gate: at least 20% of pixels must be water-coloured
+  if (waterRatio < 0.20) {
+    return { confidence: Math.min(40, waterRatio * 200), waterRatio };
+  }
+
+  const colourScore   = Math.min(100, (waterRatio / 0.45) * 100);
+  const penaltyFactor = Math.max(0, 1 - excludeRatio * 3.0); // heavier penalty
 
   // ── Horizontal uniformity ─────────────────────────────────────────────
-  const rowStep  = Math.max(1, Math.floor(height / 20));
-  const colStep  = Math.max(1, Math.floor(width  / 40));
+  const rowStep = Math.max(1, Math.floor(height / 20));
+  const colStep = Math.max(1, Math.floor(width  / 40));
   let hUniform = 0, hTotal = 0;
-
   for (let y = rowStep; y < height - rowStep; y += rowStep) {
     const vals = [];
     for (let x = 0; x < width; x += colStep) {
@@ -124,34 +181,34 @@ function detectWater(imageData) {
     }
     const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
     const vari = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length;
-    if (vari < 1200) hUniform++;
+    if (vari < 1000) hUniform++;
     hTotal++;
   }
   const horizontalScore = hTotal > 0 ? (hUniform / hTotal) * 100 : 0;
 
-  // ── Texture complexity ────────────────────────────────────────────────
+  // ── Texture score (water = low-medium Laplacian) ──────────────────────
   const gray = new Float32Array(width * height);
   for (let i = 0; i < data.length; i += 4)
     gray[i / 4] = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
-
   let lapSum = 0, lapCount = 0;
   for (let y = 1; y < height - 1; y += 2)
     for (let x = 1; x < width - 1; x += 2) {
       const idx = y * width + x;
-      lapSum += Math.abs(4*gray[idx] - gray[idx-1] - gray[idx+1] - gray[idx-width] - gray[idx+width]);
+      lapSum += Math.abs(4*gray[idx] - gray[idx-1] - gray[idx+1]
+                        - gray[idx-width] - gray[idx+width]);
       lapCount++;
     }
   const avgLap = lapCount > 0 ? lapSum / lapCount : 0;
+  // Water: Laplacian 1-35. Walls also have low Laplacian, so this isn't decisive alone.
   let textureScore = 0;
-  if (avgLap >= 2  && avgLap <= 40)  textureScore = 100;
-  else if (avgLap > 40 && avgLap <= 70) textureScore = Math.max(0, 60 - (avgLap - 40));
-  else if (avgLap < 2)               textureScore = avgLap * 30;
+  if (avgLap >= 1  && avgLap <= 35) textureScore = 100;
+  else if (avgLap > 35 && avgLap <= 65) textureScore = Math.max(0, 70 - (avgLap - 35) * 2);
+  else if (avgLap < 1) textureScore = 20;
 
-  // ── Final score ───────────────────────────────────────────────────────
   const raw = (
-    colourScore     * 0.55 +
+    colourScore     * 0.60 +   // colour is the primary signal
     horizontalScore * 0.25 +
-    textureScore    * 0.20
+    textureScore    * 0.15
   ) * penaltyFactor;
 
   return {
@@ -179,8 +236,14 @@ export default function CameraScanner() {
   const updateStatus = useCallback((s) => setStatus(s), []);
 
   const stopCamera = useCallback(() => {
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    if (analyzerIntervalRef.current) { clearInterval(analyzerIntervalRef.current); analyzerIntervalRef.current = null; }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    if (analyzerIntervalRef.current) {
+      clearInterval(analyzerIntervalRef.current);
+      analyzerIntervalRef.current = null;
+    }
     setCameraActive(false);
   }, []);
 
@@ -220,12 +283,12 @@ export default function CameraScanner() {
 
     let totalBrightness = 0;
     for (let i = 0; i < data.length; i += 4)
-      totalBrightness += data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+      totalBrightness += data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114;
     const avgBrightness = totalBrightness / (data.length / 4);
 
     const gray = new Float32Array(canvas.width * canvas.height);
     for (let i = 0; i < data.length; i += 4)
-      gray[i/4] = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+      gray[i/4] = data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114;
     let lapSum = 0;
     const w = canvas.width, h = canvas.height;
     for (let y = 1; y < h-1; y++)
@@ -241,14 +304,15 @@ export default function CameraScanner() {
     let qualityScore = 0;
     if (avgBrightness >= QUALITY_THRESHOLDS.BRIGHTNESS_MIN && avgBrightness <= QUALITY_THRESHOLDS.BRIGHTNESS_MAX) qualityScore += 35;
     else if (avgBrightness > 10 && avgBrightness < 250) qualityScore += 15;
-    if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN * 2)       qualityScore += 30;
-    else if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN)      qualityScore += 18;
-    else if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN * 0.3)qualityScore += 6;
-    // Water confidence is the gate — if no water, quality stays low regardless
-    if (waterConfidence >= 60)      qualityScore += 35;
-    else if (waterConfidence >= 50) qualityScore += 25;
-    else if (waterConfidence >= 35) qualityScore += 10;
-    else                            qualityScore  = Math.min(qualityScore, 20); // cap low if no water
+    if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN * 2)        qualityScore += 30;
+    else if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN)       qualityScore += 18;
+    else if (blurScore > QUALITY_THRESHOLDS.BLUR_MIN * 0.3) qualityScore += 6;
+
+    // Water confidence gates quality completely
+    if (waterConfidence >= 70)      qualityScore += 35;
+    else if (waterConfidence >= 60) qualityScore += 25;
+    else if (waterConfidence >= 45) qualityScore += 10;
+    else                            qualityScore = Math.min(qualityScore, 15); // hard cap if no water
 
     return { quality: Math.min(100, qualityScore), blur: blurScore, brightness: avgBrightness, waterConfidence };
   }, []);
@@ -314,8 +378,8 @@ export default function CameraScanner() {
       if (!m) return;
       setMetrics(m);
 
-      let newStatus;
       const hasWater = m.waterConfidence >= QUALITY_THRESHOLDS.WATER_CONFIDENCE_MIN;
+      let newStatus;
 
       if (m.brightness < QUALITY_THRESHOLDS.BRIGHTNESS_MIN)      newStatus = 'too_dark';
       else if (m.brightness > QUALITY_THRESHOLDS.BRIGHTNESS_MAX) newStatus = 'too_bright';
@@ -327,7 +391,6 @@ export default function CameraScanner() {
       setWaterDetected(hasWater);
       updateStatus(newStatus);
 
-      // Auto-capture ONLY when water is confirmed
       if (newStatus === 'optimal' && !captureLockedRef.current) {
         captureLockedRef.current = true;
         vibrate([100]);
@@ -357,16 +420,16 @@ export default function CameraScanner() {
   };
 
   const getStatusIcon = () => {
-    if (status === 'analyzing')  return <Loader2 className="w-6 h-6 text-blue-400 animate-spin" strokeWidth={1.5} />;
-    if (status === 'optimal')    return <CheckCircle className="w-6 h-6 text-green-400" strokeWidth={1.5} />;
-    if (status === 'stabilizing')return <Droplets className="w-6 h-6 text-blue-400 animate-pulse" strokeWidth={1.5} />;
-    if (status === 'no_water')   return <X className="w-6 h-6 text-red-400" strokeWidth={2} />;
-    if (status === 'error')      return <AlertCircle className="w-6 h-6 text-red-400" strokeWidth={1.5} />;
+    if (status === 'analyzing')   return <Loader2 className="w-6 h-6 text-blue-400 animate-spin" strokeWidth={1.5} />;
+    if (status === 'optimal')     return <CheckCircle className="w-6 h-6 text-green-400" strokeWidth={1.5} />;
+    if (status === 'stabilizing') return <Droplets className="w-6 h-6 text-blue-400 animate-pulse" strokeWidth={1.5} />;
+    if (status === 'no_water')    return <X className="w-6 h-6 text-red-400" strokeWidth={2} />;
+    if (status === 'error')       return <AlertCircle className="w-6 h-6 text-red-400" strokeWidth={1.5} />;
     return <Droplets className="w-6 h-6 text-white/60" strokeWidth={1.5} />;
   };
 
   const frameColor  = waterDetected ? (status === 'optimal' ? 'border-green-400' : 'border-blue-400') : 'border-red-400/50';
-  const cornerColor = waterDetected ? (status === 'optimal' ? 'border-green-400' : 'border-blue-400') : 'border-white/30';
+  const cornerColor = waterDetected ? (status === 'optimal' ? 'border-green-400' : 'border-blue-400') : 'border-white/25';
 
   if (permissionDenied) {
     return (
@@ -388,7 +451,8 @@ export default function CameraScanner() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-black">
-      <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />
+      <video ref={videoRef} autoPlay playsInline muted
+        className="absolute inset-0 w-full h-full object-cover" />
       <canvas ref={canvasRef} className="hidden" />
 
       <div className="absolute inset-0 pointer-events-none">
@@ -401,7 +465,7 @@ export default function CameraScanner() {
               <span className="text-white font-semibold text-sm">WaterTruth AI</span>
             </div>
             <div className="flex flex-col items-end gap-1">
-              <div className={`px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md border
+              <div className={`px-3 py-1 rounded-full text-xs font-bold backdrop-blur-md border transition-all duration-300
                 ${waterDetected
                   ? 'bg-green-500/25 text-green-300 border-green-500/50'
                   : 'bg-red-500/20  text-red-300   border-red-500/40'}`}>
@@ -424,7 +488,7 @@ export default function CameraScanner() {
               <div className={`absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 rounded-br-3xl transition-colors duration-300 ${cornerColor}`} />
             </div>
 
-            {/* Scan line — only when water confirmed */}
+            {/* Scan line — water found, stabilizing */}
             {waterDetected && status === 'stabilizing' && (
               <motion.div
                 className="absolute left-0 right-0 border-t-2 border-blue-400/80"
@@ -433,12 +497,12 @@ export default function CameraScanner() {
               />
             )}
 
-            {/* Green check pulse on optimal */}
+            {/* Green pulse — ready to capture */}
             {status === 'optimal' && (
               <motion.div
                 className="absolute inset-0 flex items-center justify-center"
                 initial={{ scale: 0 }}
-                animate={{ scale: [1, 1.2, 1] }}
+                animate={{ scale: [1, 1.15, 1] }}
                 transition={{ duration: 0.5, repeat: 2 }}
               >
                 <div className="p-4 bg-green-500/30 rounded-full">
@@ -447,10 +511,10 @@ export default function CameraScanner() {
               </motion.div>
             )}
 
-            {/* Red X when no water */}
+            {/* Red X — no water */}
             {status === 'no_water' && (
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="p-4 bg-red-500/20 rounded-full">
+                <div className="p-4 bg-red-500/15 rounded-full">
                   <X className="w-10 h-10 text-red-400/80" strokeWidth={2} />
                 </div>
               </div>
@@ -458,17 +522,17 @@ export default function CameraScanner() {
           </div>
         </div>
 
-        {/* ── Water type chips — shown when not yet detected ── */}
+        {/* ── Water type hint chips ── */}
         {(status === 'no_water' || status === 'detecting_water') && !analyzing && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }}
             className="absolute left-0 right-0 flex justify-center"
-            style={{ top: 'calc(50% + 160px)' }}
+            style={{ top: 'calc(50% + 158px)' }}
           >
             <div className="flex gap-2 flex-wrap justify-center px-8 max-w-xs">
               {['🚰 Tap', '🌊 Ocean', '🏞️ River', '💧 Nala', '🪣 Bucket', '🟤 Muddy'].map(label => (
                 <span key={label}
-                  className="px-2 py-1 bg-white/10 backdrop-blur-md rounded-full text-white/65 text-xs border border-white/10">
+                  className="px-2 py-1 bg-white/10 backdrop-blur-md rounded-full text-white/60 text-xs border border-white/10">
                   {label}
                 </span>
               ))}
@@ -481,9 +545,9 @@ export default function CameraScanner() {
           <AnimatePresence mode="wait">
             <motion.div
               key={status}
-              initial={{ opacity: 0, y: 16 }}
+              initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
+              exit={{ opacity: 0, y: -14 }}
               className="text-center space-y-2"
             >
               <div className="flex items-center justify-center gap-3">
@@ -502,19 +566,19 @@ export default function CameraScanner() {
 
               {!analyzing && (
                 <p className="text-white/55 text-xs max-w-xs mx-auto leading-relaxed">
-                  {status === 'no_water'     && 'Aim at any water — tap, river, ocean, nala, muddy or dirty'}
+                  {status === 'no_water'        && 'Aim at any water — tap, river, ocean, nala, muddy or dirty'}
                   {status === 'detecting_water' && 'Point directly at any water surface'}
-                  {status === 'stabilizing'  && 'Water found! Hold steady for capture...'}
-                  {status === 'optimal'      && 'Auto-capturing confirmed water now...'}
-                  {status === 'too_blurry'   && 'Hold camera steady'}
-                  {status === 'too_dark'     && 'Move to better lighting'}
-                  {status === 'too_bright'   && 'Adjust camera angle'}
+                  {status === 'stabilizing'     && 'Water detected! Hold steady to capture...'}
+                  {status === 'optimal'         && 'Real water confirmed — auto-capturing now!'}
+                  {status === 'too_blurry'      && 'Hold camera steady'}
+                  {status === 'too_dark'        && 'Move to better lighting'}
+                  {status === 'too_bright'      && 'Adjust camera angle'}
                 </p>
               )}
             </motion.div>
           </AnimatePresence>
 
-          {/* Capture button — disabled style if no water */}
+          {/* Capture button */}
           {cameraActive && !analyzing && (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
@@ -530,17 +594,17 @@ export default function CameraScanner() {
                   }
                   captureAndAnalyze();
                 }}
-                className={`flex items-center gap-2 px-8 py-3 rounded-full font-semibold text-sm shadow-2xl
-                  transition-all duration-200 active:scale-95
+                className={`flex items-center gap-2 px-8 py-3 rounded-full font-semibold text-sm
+                  shadow-2xl transition-all duration-200 active:scale-95
                   ${waterDetected
                     ? 'bg-blue-500 text-white shadow-blue-500/40 hover:bg-blue-400'
-                    : 'bg-white/15 text-white/40 border border-white/20'}`}
+                    : 'bg-white/12 text-white/35 border border-white/15 cursor-not-allowed'}`}
               >
                 <Camera className="w-4 h-4" />
                 {waterDetected ? 'Capture Water' : 'Aim at Water First'}
               </button>
               {!waterDetected && (
-                <p className="text-red-400/70 text-xs">Button activates when water is in frame</p>
+                <p className="text-red-400/65 text-xs">Button activates when real water is in frame</p>
               )}
             </motion.div>
           )}
