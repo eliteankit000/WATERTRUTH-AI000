@@ -176,7 +176,7 @@ export default function Upload() {
                 ref={inputRef}
                 data-testid="upload-file-input"
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
                 className="hidden"
                 onChange={(e) => pickFile(e.target.files?.[0])}
               />
