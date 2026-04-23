@@ -1,5 +1,4 @@
 const path = require("path");
-require("dotenv").config();
 
 const isDevServer = process.env.NODE_ENV !== "production";
 

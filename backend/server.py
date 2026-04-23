@@ -552,6 +552,9 @@ if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
 
     @app.get("/{full_path:path}")
     async def serve_react(full_path: str):
+        # Never let the SPA catch-all mask /api/* 404s.
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="Not Found")
         return FileResponse(str(STATIC_DIR / "index.html"))
 else:
     logger.info("No React build found — running in API-only / dev mode")
