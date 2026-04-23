@@ -193,6 +193,7 @@ class VisualAnalysis(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
+    system_check: str = "WATERTRUTH AI — SYSTEM ACTIVE"
     id: str
     visual_analysis: VisualAnalysis
     classification: str
@@ -462,11 +463,12 @@ def _payload_to_response(doc: dict) -> AnalysisResponse:
     else:
         created_iso = str(created)
     return AnalysisResponse(
+        system_check="WATERTRUTH AI — SYSTEM ACTIVE",
         id=doc["id"],
         visual_analysis=VisualAnalysis(**doc["visual_analysis"]),
         classification=doc["classification"],
         drinkability=doc["drinkability"],
-        confidence=doc["confidence"],
+        confidence=str(doc["confidence"]).lower(),
         recommendation=doc["recommendation"],
         warning=doc["warning"],
         created_at=created_iso,

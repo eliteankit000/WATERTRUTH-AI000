@@ -171,8 +171,8 @@ export default function Results() {
               <div className="flex-1 h-2 bg-zinc-100 relative overflow-hidden rounded-full">
                 <div
                   className={`absolute inset-y-0 left-0 ${
-                    analysis.confidence === 'HIGH' ? 'w-full bg-zinc-950'
-                    : analysis.confidence === 'MEDIUM' ? 'w-2/3 bg-amber-500'
+                    analysis.confidence.toUpperCase() === 'HIGH' ? 'w-full bg-zinc-950'
+                    : analysis.confidence.toUpperCase() === 'MEDIUM' ? 'w-2/3 bg-amber-500'
                     : 'w-1/3 bg-red-500'
                   }`}
                 />

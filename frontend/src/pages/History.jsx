@@ -89,8 +89,8 @@ export default function History() {
                   <div className={`px-2 py-1 font-mono text-[10px] tracking-widest wt-class-${r.classification}`}>
                     {r.classification.replace(/_/g, ' ')}
                   </div>
-                  <div className={`px-2 py-0.5 font-mono text-[10px] tracking-widest wt-conf-${r.confidence}`}>
-                    {r.confidence}
+                  <div className={`px-2 py-0.5 font-mono text-[10px] tracking-widest wt-conf-${r.confidence.toUpperCase()}`}>
+                    {r.confidence.toUpperCase()}
                   </div>
                 </div>
                 <div className="font-display text-base font-semibold text-zinc-950 leading-tight line-clamp-2">
