@@ -1,0 +1,137 @@
+2026-04-23T10:14:03.371496321Z ==> Downloading cache...
+2026-04-23T10:14:03.418491712Z ==> Cloning from https://github.com/eliteankit000/WATERTRUTH-AI000
+2026-04-23T10:14:04.053586915Z ==> Checking out commit 63efeada019ee2f621170fdd339ca92792d7f644 in branch main
+2026-04-23T10:14:08.598796988Z ==> Downloaded 158MB in 3s. Extraction took 2s.
+2026-04-23T10:14:10.457109356Z ==> Using Python version 3.11.0 via environment variable PYTHON_VERSION
+2026-04-23T10:14:10.457125067Z ==> Docs on specifying a Python version: https://render.com/docs/python-version
+2026-04-23T10:14:10.457261137Z ==> Installing Python version 3.11.0...
+2026-04-23T10:14:24.683784642Z ==> Using Poetry version 2.1.3 (default)
+2026-04-23T10:14:24.737354709Z ==> Docs on specifying a Poetry version: https://render.com/docs/poetry-version
+2026-04-23T10:14:24.798631042Z ==> Using uv version 0.10.2 (default)
+2026-04-23T10:14:24.798642153Z ==> Docs on specifying a uv version: https://render.com/docs/uv-version
+2026-04-23T10:14:24.798738409Z ==> Installing uv version 0.10.2...
+2026-04-23T10:14:24.902391472Z ==> Running build command 'pip install -r backend/requirements.txt && cd frontend && npm install --legacy-peer-deps && npm run build'...
+2026-04-23T10:14:25.534983256Z Collecting fastapi==0.136.0
+2026-04-23T10:14:25.537031014Z   Using cached fastapi-0.136.0-py3-none-any.whl (117 kB)
+2026-04-23T10:14:25.586372025Z Collecting uvicorn[standard]==0.32.1
+2026-04-23T10:14:25.587928428Z   Using cached uvicorn-0.32.1-py3-none-any.whl (63 kB)
+2026-04-23T10:14:25.631831427Z Collecting gunicorn==23.0.0
+2026-04-23T10:14:25.633647718Z   Using cached gunicorn-23.0.0-py3-none-any.whl (85 kB)
+2026-04-23T10:14:25.687997681Z Collecting starlette==1.0.0
+2026-04-23T10:14:25.689666982Z   Using cached starlette-1.0.0-py3-none-any.whl (72 kB)
+2026-04-23T10:14:26.374231628Z Collecting sqlalchemy[asyncio]==2.0.49
+2026-04-23T10:14:26.384690823Z   Using cached sqlalchemy-2.0.49-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.3 MB)
+2026-04-23T10:14:26.49533151Z Collecting asyncpg==0.31.0
+2026-04-23T10:14:26.511365297Z   Using cached asyncpg-0.31.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.0 MB)
+2026-04-23T10:14:26.669565917Z Collecting psycopg2-binary==2.9.12
+2026-04-23T10:14:26.682870788Z   Using cached psycopg2_binary-2.9.12-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.3 MB)
+2026-04-23T10:14:26.853727811Z Collecting openai==1.99.9
+2026-04-23T10:14:26.856367172Z   Using cached openai-1.99.9-py3-none-any.whl (786 kB)
+2026-04-23T10:14:26.891022773Z Collecting python-dotenv==1.0.1
+2026-04-23T10:14:26.892465678Z   Using cached python_dotenv-1.0.1-py3-none-any.whl (19 kB)
+2026-04-23T10:14:26.927939388Z Collecting python-multipart==0.0.19
+2026-04-23T10:14:26.929700305Z   Using cached python_multipart-0.0.19-py3-none-any.whl (24 kB)
+2026-04-23T10:14:27.222912532Z Collecting pydantic==2.13.3
+2026-04-23T10:14:27.224954329Z   Using cached pydantic-2.13.3-py3-none-any.whl (471 kB)
+2026-04-23T10:14:28.839244931Z Collecting pydantic-core==2.46.3
+2026-04-23T10:14:28.846479023Z   Using cached pydantic_core-2.46.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+2026-04-23T10:14:29.232109401Z Collecting Pillow==11.0.0
+2026-04-23T10:14:29.240905196Z   Using cached pillow-11.0.0-cp311-cp311-manylinux_2_28_x86_64.whl (4.4 MB)
+2026-04-23T10:14:29.749820375Z Collecting numpy==2.1.3
+2026-04-23T10:14:29.799884299Z   Using cached numpy-2.1.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (16.3 MB)
+2026-04-23T10:14:29.871922589Z Collecting slowapi==0.1.9
+2026-04-23T10:14:29.873548227Z   Using cached slowapi-0.1.9-py3-none-any.whl (14 kB)
+2026-04-23T10:14:29.926733516Z Collecting limits==5.8.0
+2026-04-23T10:14:29.928475662Z   Using cached limits-5.8.0-py3-none-any.whl (60 kB)
+2026-04-23T10:14:30.002080635Z Collecting typing-extensions>=4.8.0
+2026-04-23T10:14:30.005913992Z   Using cached typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+2026-04-23T10:14:30.028443078Z Collecting typing-inspection>=0.4.2
+2026-04-23T10:14:30.030008441Z   Using cached typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+2026-04-23T10:14:30.049692473Z Collecting annotated-doc>=0.0.2
+2026-04-23T10:14:30.051199431Z   Using cached annotated_doc-0.0.4-py3-none-any.whl (5.3 kB)
+2026-04-23T10:14:30.114934892Z Collecting click>=7.0
+2026-04-23T10:14:30.116931516Z   Using cached click-8.3.3-py3-none-any.whl (110 kB)
+2026-04-23T10:14:30.141407063Z Collecting h11>=0.8
+2026-04-23T10:14:30.142990788Z   Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+2026-04-23T10:14:30.2372276Z Collecting httptools>=0.6.3
+2026-04-23T10:14:30.239924025Z   Using cached httptools-0.7.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (456 kB)
+2026-04-23T10:14:30.33058053Z Collecting pyyaml>=5.1
+2026-04-23T10:14:30.332967402Z   Using cached pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (806 kB)
+2026-04-23T10:14:30.427174713Z Collecting uvloop!=0.15.0,!=0.15.1,>=0.14.0
+2026-04-23T10:14:30.436158941Z   Using cached uvloop-0.22.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.8 MB)
+2026-04-23T10:14:30.623867902Z Collecting watchfiles>=0.13
+2026-04-23T10:14:30.625847365Z   Using cached watchfiles-1.1.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (456 kB)
+2026-04-23T10:14:30.837914814Z Collecting websockets>=10.4
+2026-04-23T10:14:30.839627408Z   Using cached websockets-16.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (184 kB)
+2026-04-23T10:14:30.882590159Z Collecting packaging
+2026-04-23T10:14:30.884078287Z   Using cached packaging-26.1-py3-none-any.whl (95 kB)
+2026-04-23T10:14:31.03137798Z Collecting anyio<5,>=3.6.2
+2026-04-23T10:14:31.033120336Z   Using cached anyio-4.13.0-py3-none-any.whl (114 kB)
+2026-04-23T10:14:31.372998502Z Collecting greenlet>=1
+2026-04-23T10:14:31.375226643Z   Using cached greenlet-3.4.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (613 kB)
+2026-04-23T10:14:31.43488493Z Collecting distro<2,>=1.7.0
+2026-04-23T10:14:31.43655273Z   Using cached distro-1.9.0-py3-none-any.whl (20 kB)
+2026-04-23T10:14:31.478214158Z Collecting httpx<1,>=0.23.0
+2026-04-23T10:14:31.479739708Z   Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-04-23T10:14:31.674399501Z Collecting jiter<1,>=0.4.0
+2026-04-23T10:14:31.676398255Z   Using cached jiter-0.14.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (358 kB)
+2026-04-23T10:14:31.724806489Z Collecting sniffio
+2026-04-23T10:14:31.726439727Z   Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+2026-04-23T10:14:31.796873232Z Collecting tqdm>4
+2026-04-23T10:14:31.798593807Z   Using cached tqdm-4.67.3-py3-none-any.whl (78 kB)
+2026-04-23T10:14:31.846460122Z Collecting annotated-types>=0.6.0
+2026-04-23T10:14:31.847931418Z   Using cached annotated_types-0.7.0-py3-none-any.whl (13 kB)
+2026-04-23T10:14:31.930010143Z Collecting deprecated>=1.2
+2026-04-23T10:14:31.931610319Z   Using cached deprecated-1.3.1-py2.py3-none-any.whl (11 kB)
+2026-04-23T10:14:31.970496036Z Collecting idna>=2.8
+2026-04-23T10:14:31.972001505Z   Using cached idna-3.13-py3-none-any.whl (68 kB)
+2026-04-23T10:14:32.49137638Z Collecting wrapt<3,>=1.10
+2026-04-23T10:14:32.493204632Z   Using cached wrapt-2.1.2-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (114 kB)
+2026-04-23T10:14:32.560412183Z Collecting certifi
+2026-04-23T10:14:32.56203343Z   Using cached certifi-2026.4.22-py3-none-any.whl (135 kB)
+2026-04-23T10:14:32.597642111Z Collecting httpcore==1.*
+2026-04-23T10:14:32.599174922Z   Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-04-23T10:14:33.122279496Z Installing collected packages: wrapt, websockets, uvloop, typing-extensions, tqdm, sniffio, pyyaml, python-multipart, python-dotenv, psycopg2-binary, Pillow, packaging, numpy, jiter, idna, httptools, h11, greenlet, distro, click, certifi, asyncpg, annotated-types, annotated-doc, uvicorn, typing-inspection, sqlalchemy, pydantic-core, httpcore, gunicorn, deprecated, anyio, watchfiles, starlette, pydantic, limits, httpx, slowapi, openai, fastapi
+2026-04-23T10:14:40.767609756Z Successfully installed Pillow-11.0.0 annotated-doc-0.0.4 annotated-types-0.7.0 anyio-4.13.0 asyncpg-0.31.0 certifi-2026.4.22 click-8.3.3 deprecated-1.3.1 distro-1.9.0 fastapi-0.136.0 greenlet-3.4.0 gunicorn-23.0.0 h11-0.16.0 httpcore-1.0.9 httptools-0.7.1 httpx-0.28.1 idna-3.13 jiter-0.14.0 limits-5.8.0 numpy-2.1.3 openai-1.99.9 packaging-26.1 psycopg2-binary-2.9.12 pydantic-2.13.3 pydantic-core-2.46.3 python-dotenv-1.0.1 python-multipart-0.0.19 pyyaml-6.0.3 slowapi-0.1.9 sniffio-1.3.1 sqlalchemy-2.0.49 starlette-1.0.0 tqdm-4.67.3 typing-extensions-4.15.0 typing-inspection-0.4.2 uvicorn-0.32.1 uvloop-0.22.1 watchfiles-1.1.1 websockets-16.0 wrapt-2.1.2
+2026-04-23T10:14:40.81199089Z 
+2026-04-23T10:14:40.812032103Z [notice] A new release of pip available: 22.3 -> 26.0.1
+2026-04-23T10:14:40.812038283Z [notice] To update, run: pip install --upgrade pip
+2026-04-23T10:14:41.514786301Z ==> Requesting Node.js version 22.x
+2026-04-23T10:14:41.752076884Z ==> Using Node.js version 22.22.2 via /opt/render/project/src/package.json
+2026-04-23T10:14:41.775420419Z ==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+2026-04-23T10:14:54.833421589Z 
+2026-04-23T10:14:54.833446741Z added 1545 packages, and audited 1546 packages in 13s
+2026-04-23T10:14:54.833456091Z 
+2026-04-23T10:14:54.833493674Z 290 packages are looking for funding
+2026-04-23T10:14:54.833502355Z   run `npm fund` for details
+2026-04-23T10:14:54.857652519Z 
+2026-04-23T10:14:54.85767279Z 32 vulnerabilities (11 low, 6 moderate, 15 high)
+2026-04-23T10:14:54.85767651Z 
+2026-04-23T10:14:54.857680561Z To address issues that do not require attention, run:
+2026-04-23T10:14:54.857683871Z   npm audit fix
+2026-04-23T10:14:54.857687131Z 
+2026-04-23T10:14:54.857690231Z To address all issues (including breaking changes), run:
+2026-04-23T10:14:54.857694002Z   npm audit fix --force
+2026-04-23T10:14:54.857696992Z 
+2026-04-23T10:14:54.857701012Z Run `npm audit` for details.
+2026-04-23T10:14:55.142189755Z 
+2026-04-23T10:14:55.142215817Z > frontend@0.1.0 build
+2026-04-23T10:14:55.142223348Z > craco build
+2026-04-23T10:14:55.142229388Z 
+2026-04-23T10:14:56.161107353Z Creating an optimized production build...
+2026-04-23T10:15:15.117400225Z 
+2026-04-23T10:15:15.117432127Z Treating warnings as errors because process.env.CI = true.
+2026-04-23T10:15:15.117437987Z Most CI servers set it automatically.
+2026-04-23T10:15:15.117442028Z 
+2026-04-23T10:15:15.117734949Z Failed to compile.
+2026-04-23T10:15:15.11775368Z 
+2026-04-23T10:15:15.118803426Z [eslint] 
+2026-04-23T10:15:15.118816087Z src/components/CameraScanner.jsx
+2026-04-23T10:15:15.118821127Z   Line 322:6:  React Hook useEffect has a missing dependency: 'showManualHint'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+2026-04-23T10:15:15.118825218Z 
+2026-04-23T10:15:15.11886409Z 
+2026-04-23T10:15:15.287021706Z ==> Build failed 😞
+2026-04-23T10:15:15.287046298Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+2026-04-23T10:15:15.46206457Z ==> Requesting Node.js version 22.x
+2026-04-23T10:15:15.633181739Z ==> Using Node.js version 22.22.2 via /opt/render/project/src/package.json
+2026-04-23T10:15:15.658661549Z ==> Docs on specifying a Node.js version: https://render.com/docs/node-version
