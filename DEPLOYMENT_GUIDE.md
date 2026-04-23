@@ -1,275 +1,79 @@
-# WaterTruth AI - Production Deployment Guide
+# Deploy WaterTruth AI to Render
 
-## Prerequisites
+This app ships as a **single web service** on Render. The build step compiles
+the React frontend into `frontend/build/`, and FastAPI (`backend/server.py`)
+serves both `/api/*` and the static React build from the same origin.
 
-- Node.js 18+ and Python 3.11+
-- MongoDB instance (local or cloud)
-- OpenAI API key
-- Domain with HTTPS (for camera features)
+## 1. Push to GitHub
 
-## Environment Configuration
+Push this repository to a GitHub account that Render can read.
 
-### Backend (.env)
+## 2. Create the service on Render
 
-```bash
-# Database
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=watertruth_db
+Option A — **Blueprint (recommended)**:
 
-# CORS (comma-separated origins)
-CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+1. Go to [Render Dashboard](https://dashboard.render.com) → **New +** → **Blueprint**
+2. Connect your GitHub repo — Render will read `render.yaml` automatically
+3. When prompted, paste the two secrets:
+   - `OPENAI_API_KEY` — your OpenAI key with GPT-5.2 access
+   - `DATABASE_URL` — your Supabase **Transaction Pooler** URI (port `6543`)
+     ```
+     postgresql://postgres.<PROJECT_REF>:<PASSWORD>@aws-0-<REGION>.pooler.supabase.com:6543/postgres
+     ```
+4. Click **Apply** — first build takes ~4-6 min (installs Python + Node deps, builds React)
 
-# OpenAI
-OPENAI_API_KEY=sk-your-openai-api-key-here
-OPENAI_MODEL=gpt-4o-mini  # or gpt-4o for better quality
+Option B — **Manual web service**:
+
+- **Runtime**: Python 3
+- **Build command**:
+  ```
+  pip install -r backend/requirements.txt && cd frontend && yarn install --frozen-lockfile && yarn build
+  ```
+- **Start command**:
+  ```
+  cd backend && gunicorn server:app -c gunicorn.conf.py
+  ```
+- **Health check path**: `/api/health`
+- **Environment variables** (Environment tab):
+  - `OPENAI_API_KEY` = your OpenAI key
+  - `DATABASE_URL` = Supabase pooler URI (port 6543)
+  - `OPENAI_MODEL` = `gpt-5.2`
+  - `PYTHON_VERSION` = `3.11.9`
+  - `NODE_VERSION` = `20.11.1`
+
+## 3. Verify after deploy
+
+```
+curl https://<your-service>.onrender.com/api/health
 ```
 
-### Frontend (.env)
-
-```bash
-# Backend API URL (must be HTTPS in production)
-REACT_APP_BACKEND_URL=https://api.yourdomain.com
-```
-
-## Deployment Options
-
-### Option 1: Vercel + MongoDB Atlas (Recommended)
-
-**Frontend (Vercel):**
-
-1. Install Vercel CLI:
-```bash
-npm install -g vercel
-```
-
-2. Deploy frontend:
-```bash
-cd /app/frontend
-vercel --prod
-```
-
-3. Set environment variable:
-```bash
-vercel env add REACT_APP_BACKEND_URL
-# Enter: https://your-backend-url.com
-```
-
-**Backend (Vercel Serverless):**
-
-1. Create `vercel.json` in `/app/backend`:
+Expected:
 ```json
 {
-  "version": 2,
-  "builds": [
-    {"src": "server.py", "use": "@vercel/python"}
-  ],
-  "routes": [
-    {"src": "/(.*)", "dest": "server.py"}
-  ]
+  "status": "healthy",
+  "database": "supabase",
+  "ai": "configured",
+  "model": "gpt-5.2"
 }
 ```
 
-2. Deploy:
-```bash
-cd /app/backend
-vercel --prod
-```
+Then open `https://<your-service>.onrender.com/` in a browser — you should see
+the WaterTruth home page. Tap **Start Camera Scan** (requires HTTPS, which
+Render provides by default) → capture a water sample → get a real GPT-5.2
+classification.
 
-3. Set environment variables:
-```bash
-vercel env add MONGO_URL
-vercel env add OPENAI_API_KEY
-vercel env add OPENAI_MODEL
-```
+## 4. Common gotchas
 
-**Database (MongoDB Atlas):**
+| Symptom | Fix |
+|---|---|
+| `database: "in-memory (fallback)"` in /api/health | `DATABASE_URL` missing or wrong. Must be Transaction Pooler on port **6543**, not direct connection on 5432. |
+| `ai: "not configured"` | `OPENAI_API_KEY` missing from Environment tab. |
+| 500 on first write (`CheckViolationError`) | You added CHECK constraints and the em-dash got mangled. Drop them: `ALTER TABLE water_analyses DROP CONSTRAINT IF EXISTS water_analyses_drinkability_valid, DROP CONSTRAINT IF EXISTS water_analyses_classification_valid, DROP CONSTRAINT IF EXISTS water_analyses_confidence_valid;` |
+| Camera permission denied on phone | Must be served over HTTPS. Render gives you HTTPS by default. |
+| Free tier sleeps after 15 min idle | First request after sleep takes ~30s to wake. Upgrade to Starter ($7/mo) for always-on. |
 
-1. Create free cluster at https://cloud.mongodb.com
-2. Get connection string
-3. Update `MONGO_URL` in Vercel
+## 5. Database schema
 
-### Option 2: AWS (EC2 + RDS/DocumentDB)
-
-**Backend:**
-
-```bash
-# Install dependencies
-sudo apt update
-sudo apt install python3-pip nginx
-
-# Clone and setup
-cd /var/www
-git clone your-repo
-cd watertruth-backend
-pip3 install -r requirements.txt
-
-# Run with Gunicorn
-gunicorn -w 4 -k uvicorn.workers.UvicornWorker server:app --bind 0.0.0.0:8001
-```
-
-**Frontend:**
-
-```bash
-# Build
-cd /app/frontend
-npm run build
-
-# Serve with Nginx
-sudo cp -r build/* /var/www/html/
-```
-
-**Nginx config:**
-
-```nginx
-server {
-    listen 80;
-    server_name yourdomain.com;
-
-    location / {
-        root /var/www/html;
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api {
-        proxy_pass http://localhost:8001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-### Option 3: Docker Compose
-
-**Create `docker-compose.yml`:**
-
-```yaml
-version: '3.8'
-
-services:
-  mongodb:
-    image: mongo:7
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-
-  backend:
-    build: ./backend
-    ports:
-      - "8001:8001"
-    environment:
-      - MONGO_URL=mongodb://mongodb:27017
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=gpt-4o-mini
-    depends_on:
-      - mongodb
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:3000"
-    environment:
-      - REACT_APP_BACKEND_URL=http://localhost:8001
-
-volumes:
-  mongo-data:
-```
-
-**Deploy:**
-```bash
-export OPENAI_API_KEY=your-key
-docker-compose up -d
-```
-
-### Option 4: Netlify + Railway
-
-**Frontend (Netlify):**
-
-```bash
-# Install Netlify CLI
-npm install -g netlify-cli
-
-# Deploy
-cd /app/frontend
-netlify deploy --prod
-```
-
-**Backend (Railway):**
-
-1. Visit https://railway.app
-2. Create new project
-3. Add MongoDB service
-4. Deploy from GitHub
-5. Add environment variables
-
-## SSL/HTTPS Setup
-
-### Let's Encrypt (Free)
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d yourdomain.com
-```
-
-### Cloudflare (Recommended)
-
-1. Add domain to Cloudflare
-2. Enable "Always Use HTTPS"
-3. Set SSL mode to "Full"
-4. Enable "Automatic HTTPS Rewrites"
-
-## Post-Deployment Checklist
-
-- [ ] HTTPS enabled (required for camera)
-- [ ] CORS configured correctly
-- [ ] OpenAI API key working
-- [ ] MongoDB connected
-- [ ] PWA manifest accessible
-- [ ] Service worker registering
-- [ ] Rate limiting active
-- [ ] Error logging configured
-- [ ] Backup strategy in place
-- [ ] Domain DNS configured
-
-## Monitoring
-
-**Backend Health:**
-```bash
-curl https://api.yourdomain.com/api/health
-```
-
-**Frontend:**
-```bash
-curl https://yourdomain.com/manifest.json
-```
-
-## Cost Estimates
-
-### Free Tier (Good for testing):
-- Vercel: Free (hobby)
-- MongoDB Atlas: Free (512MB)
-- OpenAI: Pay per use (~$0.15/1K requests with gpt-4o-mini)
-- **Total: ~$5-20/month depending on usage**
-
-### Production:
-- Vercel Pro: $20/month
-- MongoDB Atlas M10: $57/month
-- OpenAI: ~$50-200/month (depends on traffic)
-- Cloudflare: Free
-- **Total: ~$130-280/month**
-
-## Scaling Considerations
-
-- Use CDN (Cloudflare) for static assets
-- Enable MongoDB indexes on `timestamp` and `id`
-- Cache OpenAI responses for common patterns
-- Use Redis for rate limiting in multi-instance setups
-- Consider AWS Lambda for serverless backend
-
-## Support
-
-For issues, check:
-- Backend logs: `/var/log/supervisor/backend.err.log`
-- Frontend build errors: `npm run build`
-- MongoDB connection: Test connection string
-- OpenAI API: Check quota and billing
+SQLAlchemy auto-creates the `water_analyses` table on first startup. No
+migrations needed for the initial deploy. If you want to add indexes or
+constraints, use the SQL helpers in `/app/memory/PRD.md`.

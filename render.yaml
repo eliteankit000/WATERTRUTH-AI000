@@ -4,21 +4,27 @@ services:
     runtime: python
     region: oregon
     plan: free
-    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install --legacy-peer-deps && npm run build
-    startCommand: cd backend && gunicorn server:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    buildCommand: |
+      set -e
+      pip install --upgrade pip
+      pip install -r backend/requirements.txt
+      npm install -g corepack && corepack enable
+      cd frontend
+      yarn install --frozen-lockfile || yarn install
+      yarn build
+    startCommand: cd backend && gunicorn server:app -c gunicorn.conf.py
     healthCheckPath: /api/health
     envVars:
-      - key: MONGO_URL
+      # ── REQUIRED — set in Render dashboard (Environment tab) ────────────
+      - key: OPENAI_API_KEY            # OpenAI key with GPT-5.2 access
         sync: false
-      - key: DB_NAME
-        value: watertruth_db
-      - key: OPENAI_API_KEY
+      - key: DATABASE_URL              # Supabase Transaction Pooler URI (port 6543)
         sync: false
+
+      # ── Defaults (override if you want) ───────────────────────────────
       - key: OPENAI_MODEL
-        value: gpt-4o-mini
-      - key: CORS_ORIGINS
-        value: "*"
-      - key: PORT
-        value: "10000"
+        value: gpt-5.2
       - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "3.11.9"
+      - key: NODE_VERSION
+        value: "20.11.1"
