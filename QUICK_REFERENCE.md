@@ -87,7 +87,7 @@ MONGO_URL=mongodb://localhost:27017
 DB_NAME=watertruth_db
 CORS_ORIGINS=*
 OPENAI_API_KEY=sk-your-key
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.2
 ```
 
 ### Frontend (.env)

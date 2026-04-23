@@ -5,6 +5,7 @@ import Home from '@/pages/Home';
 import CameraScanner from '@/components/CameraScanner';
 import Results from '@/pages/Results';
 import History from '@/pages/History';
+import Upload from '@/pages/Upload';
 import { Toaster } from '@/components/ui/sonner';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
@@ -27,6 +28,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/scan" element={<CameraScanner />} />
+            <Route path="/upload" element={<Upload />} />
             <Route path="/results/:id" element={<Results />} />
             <Route path="/history" element={<History />} />
           </Routes>

@@ -1,0 +1,35 @@
+{
+  "summary": "End-to-end LIVE test of WaterTruth AI with real OPENAI_API_KEY (GPT-5.2) and Supabase DATABASE_URL. All 8 backend pytest cases + 24 frontend/UI assertions (Upload flow, mobile responsive, /results, /history, /scan) pass. No gpt-4o references remain. Strict schema + mandatory warning verbatim. Upload flow with shared analyzeImage.js lib hits /api/analyze and renders inline ResultCard with all required data-testids.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_watertruth_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py still uses deprecated @app.on_event('startup'/'shutdown'); migrate to FastAPI lifespan context manager.",
+    "POST /api/analyze has no explicit max_bytes guard (relies only on 20/min rate-limit). Add a request.client max body size (~12 MB matching frontend MAX_FILE_MB).",
+    "image_data stored as full base64 JPEG in Postgres Text column — at scale move to Supabase Storage and persist only the URL.",
+    "CORS allow_origins=['*'] acceptable now but must be tightened once any auth/session is added.",
+    "Home.jsx and History axios calls swallow errors silently (.catch(()=>{}) / similar). Consider surfacing a toast on non-connectivity failures so users know the backend is unreachable.",
+    "Upload.jsx: `accept='image/*'` on the <input> but JS whitelist is JPG/PNG/WEBP only — pickers on some devices may still let users pick HEIC/GIF. Consider tightening the accept attr to match."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_watertruth_api.py (rewritten for LIVE mode: health asserts ai=configured/model=gpt-5.2/database=supabase; analyze asserts strict schema + drinkability!=SAFE + valid classification + verbatim warning)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (27/27 assertions)"},
+  "test_credentials": "n/a — no auth in this app",
+  "seed_data_creation": "~3 /api/analyze calls were made during tests against real GPT-5.2 + Supabase. Rows are persisted in Supabase and visible on /history (7 items currently). The test image used was an aerial pebbles photo from Pexels, which GPT-5.2 correctly classified as NO_WATER_DETECTED.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use /tmp/river_water.jpg (downloaded from Pexels id 1029604) — NOTE: that particular Pexels image is actually pebbles, so GPT-5.2 returns NO_WATER_DETECTED (valid behaviour, proves vision is live). For a true-water visual test, swap /tmp/river_water.jpg for a pexels water/river photo. All data-testids verified: upload-file-input (hidden — use state='attached' in playwright), upload-analyze-btn, upload-preview-image, upload-clear-btn, upload-to-camera-btn, result-card, result-card-loading, result-card-error, mandatory-safety-warning, results-classification-badge, drinkability-verdict, confidence-badge, view-full-report-btn (button, not <a>, so .href is null — navigate via onClick or use history id), nav-history-btn, start-scan-button, upload-image-button, cancel-scan-button, history-feed-item. Mobile overflow verified clean (scrollWidth==clientWidth) at 375px on /, /upload, /history, /results/:id. Live camera stream on /scan intentionally NOT tested (headless has no camera).",
+  "rca of the issue": "No bugs found. VERIFIED LIVE INTEGRATIONS: (a) OpenAI GPT-5.2 vision — POST /api/analyze with real JPG triggers real model call, returns valid classification in VALID_CLASSIFICATIONS set, drinkability correctly mapped, confidence low/medium/high, verbatim mandatory warning. (b) Supabase Postgres — /api/health reports database='supabase', /api/analyses returns 7 persisted rows sorted newest-first with image_data stripped, GET by id returns full doc incl. base64. Code audit confirmed zero gpt-4o strings anywhere in /app/backend, /app/frontend/src, /app/render.yaml, /app/backend/.env. Upload flow error handling: selecting a .txt file shows data-testid='result-card-error' client-side WITHOUT hitting /api/analyze (network intercept confirmed hits=0). Shared lib analyzeImage.js confirmed used by Upload.jsx; CameraScanner uses its own capture pipeline as intended."
+}

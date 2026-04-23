@@ -300,6 +300,19 @@ export default function CameraScanner() {
 
   useEffect(() => { startCamera(); return () => stopCamera(); }, [startCamera, stopCamera]);
 
+  // Spec §1: pause camera when tab is hidden, resume on return
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        stopCamera();
+      } else if (!captureLockedRef.current && !analyzing) {
+        startCamera();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [startCamera, stopCamera, analyzing]);
+
   const statusText = {
     initializing:    'INITIALISING SENSOR…',
     detecting_water: 'ALIGN FRAME · AWAITING WATER',

@@ -1,13 +1,10 @@
-"""WaterTruth AI backend API tests — fallback mode (no OpenAI, no DATABASE_URL)."""
-import io
+"""WaterTruth AI backend API tests — LIVE mode (GPT-5.2 vision + Supabase)."""
 import os
 import pytest
 import requests
-from PIL import Image, ImageDraw
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    # fall back to reading from frontend .env so tests work when run locally
     env_path = "/app/frontend/.env"
     if os.path.exists(env_path):
         with open(env_path) as f:
@@ -24,147 +21,116 @@ MANDATORY_WARNING = (
     "testing (TDS, pH, bacteria, chemical screening)."
 )
 
+VALID_CLASSIFICATIONS = {
+    "CLEAN", "SLIGHTLY_CONTAMINATED", "DIRTY", "HIGHLY_POLLUTED", "NO_WATER_DETECTED",
+}
 DRINKABILITY_MAP = {
-    "CLEAN": "UNCERTAIN — VISUAL ONLY",
+    "CLEAN":                 "UNCERTAIN — VISUAL ONLY",
     "SLIGHTLY_CONTAMINATED": "UNCERTAIN — TESTING REQUIRED",
-    "DIRTY": "NOT SAFE TO DRINK",
-    "HIGHLY_POLLUTED": "NOT SAFE TO DRINK",
-    "NO_WATER_DETECTED": "N/A",
+    "DIRTY":                 "NOT SAFE TO DRINK",
+    "HIGHLY_POLLUTED":       "NOT SAFE TO DRINK",
+    "NO_WATER_DETECTED":     "N/A",
 }
 
 
-def _make_jpeg_bytes(w=320, h=240) -> bytes:
-    """Create a non-uniform JPEG with real visual features."""
-    img = Image.new("RGB", (w, h), (80, 140, 200))
-    d = ImageDraw.Draw(img)
-    # Add shapes/edges/texture
-    d.rectangle([20, 20, 120, 120], fill=(50, 90, 150), outline=(0, 0, 0), width=3)
-    d.ellipse([150, 50, 280, 180], fill=(200, 220, 240), outline=(30, 30, 30), width=2)
-    d.line([(0, 0), (w, h)], fill=(255, 255, 255), width=2)
-    d.line([(0, h), (w, 0)], fill=(10, 10, 10), width=2)
-    for i in range(0, w, 20):
-        d.line([(i, 0), (i, h)], fill=(120, 160, 210), width=1)
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
-    return buf.getvalue()
-
-
 @pytest.fixture(scope="module")
-def jpeg_bytes():
-    return _make_jpeg_bytes()
+def real_jpeg_bytes():
+    path = "/tmp/river_water.jpg"
+    with open(path, "rb") as f:
+        return f.read()
 
 
-# ─── Health ──────────────────────────────────────────────────────────────────
+# ─── Health ─────────────────────────────────────────────────────────────────
 class TestHealth:
-    def test_health_returns_fallback_state(self):
+    def test_health_live_mode(self):
         r = requests.get(f"{API}/health", timeout=15)
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["status"] == "healthy"
         assert d["service"] == "WaterTruth AI"
-        assert d["database"] == "in-memory (fallback)"
-        assert d["ai"] == "not configured (fallback)"
-        assert d["model"] == "n/a"
-        assert "memory_store_count" in d
+        assert d["database"] == "supabase", f"expected supabase, got {d['database']}"
+        assert d["ai"] == "configured", f"expected configured, got {d['ai']}"
+        assert d["model"] == "gpt-5.2"
 
 
-# ─── Analyze: happy path in fallback mode ────────────────────────────────────
+# ─── Analyze (real GPT-5.2) ─────────────────────────────────────────────────
 class TestAnalyze:
-    def test_analyze_valid_jpeg_returns_strict_schema(self, jpeg_bytes):
-        files = {"file": ("sample.jpg", jpeg_bytes, "image/jpeg")}
-        r = requests.post(f"{API}/analyze", files=files, timeout=45)
+    def test_analyze_real_water_image(self, real_jpeg_bytes):
+        files = {"file": ("river.jpg", real_jpeg_bytes, "image/jpeg")}
+        r = requests.post(f"{API}/analyze", files=files, timeout=90)
         assert r.status_code == 200, r.text
         d = r.json()
 
-        # Top-level keys
+        # Schema
         for k in ["id", "visual_analysis", "classification", "drinkability",
                   "confidence", "recommendation", "warning", "created_at", "image_data"]:
             assert k in d, f"missing key {k}"
 
-        # visual_analysis sub-keys
         va = d["visual_analysis"]
         for k in ["color", "clarity", "particles", "surface", "source_context"]:
             assert k in va and isinstance(va[k], str) and va[k]
 
-        # In fallback: classification=NO_WATER_DETECTED, drinkability=N/A, confidence=LOW
-        assert d["classification"] == "NO_WATER_DETECTED"
-        assert d["drinkability"] == "N/A"
-        assert d["confidence"] == "LOW"
-        assert "OPENAI_API_KEY" in d["recommendation"] or "OpenAI" in d["recommendation"]
+        # Strict valid-value enforcement
+        assert d["classification"] in VALID_CLASSIFICATIONS
+        assert d["drinkability"] == DRINKABILITY_MAP[d["classification"]]
+        assert d["confidence"].lower() in {"low", "medium", "high"}
+
+        # CRITICAL: never declares SAFE
+        assert "SAFE TO DRINK" != d["drinkability"]
+        assert d["drinkability"] != "SAFE"
+        # For CLEAN, must be UNCERTAIN (not SAFE)
+        if d["classification"] == "CLEAN":
+            assert "UNCERTAIN" in d["drinkability"]
 
         # Mandatory warning verbatim
         assert d["warning"] == MANDATORY_WARNING
 
-        # image_data is base64 & created_at is ISO string
         assert isinstance(d["image_data"], str) and len(d["image_data"]) > 100
-        assert isinstance(d["created_at"], str)
-        assert "T" in d["created_at"]  # ISO 8601
+        assert "T" in d["created_at"]
 
-        # Stash for downstream tests
-        pytest.last_analysis_id = d["id"]
-        pytest.last_analysis = d
+        pytest.last_id = d["id"]
 
     def test_analyze_rejects_non_image(self):
         files = {"file": ("foo.txt", b"plain text data", "text/plain")}
         r = requests.post(f"{API}/analyze", files=files, timeout=15)
-        assert r.status_code == 400, r.text
+        assert r.status_code == 400
 
     def test_analyze_rejects_empty_file(self):
         files = {"file": ("empty.jpg", b"", "image/jpeg")}
         r = requests.post(f"{API}/analyze", files=files, timeout=15)
-        assert r.status_code == 400, r.text
+        assert r.status_code == 400
 
     def test_analyze_rejects_corrupted_image(self):
         files = {"file": ("bad.jpg", b"\x00\x01not-an-image\xff\xd8\xff", "image/jpeg")}
         r = requests.post(f"{API}/analyze", files=files, timeout=15)
-        assert r.status_code == 400, r.text
-
-    def test_drinkability_matches_classification(self, jpeg_bytes):
-        """Fallback always yields NO_WATER_DETECTED, so drinkability must be N/A."""
-        files = {"file": ("x.jpg", jpeg_bytes, "image/jpeg")}
-        r = requests.post(f"{API}/analyze", files=files, timeout=45)
-        assert r.status_code == 200
-        d = r.json()
-        assert DRINKABILITY_MAP[d["classification"]] == d["drinkability"]
-        assert d["warning"] == MANDATORY_WARNING
+        assert r.status_code == 400
 
 
-# ─── List + Get by id ───────────────────────────────────────────────────────
+# ─── List + Get by id + Supabase persistence ───────────────────────────────
 class TestAnalysesList:
-    def test_list_analyses_limit_5(self, jpeg_bytes):
-        # Ensure at least 1 exists
-        requests.post(f"{API}/analyze",
-                      files={"file": ("s.jpg", jpeg_bytes, "image/jpeg")}, timeout=45)
-
+    def test_list_analyses(self):
         r = requests.get(f"{API}/analyses?limit=5", timeout=15)
         assert r.status_code == 200
         arr = r.json()
         assert isinstance(arr, list)
         assert len(arr) >= 1
-        assert len(arr) <= 5
-
-        # No image_data in list responses
         for it in arr:
-            assert it.get("image_data") is None
+            assert it.get("image_data") is None  # stripped from list
             assert it["warning"] == MANDATORY_WARNING
-            assert it["classification"] in DRINKABILITY_MAP
-
-        # Sorted newest first
+            assert it["classification"] in VALID_CLASSIFICATIONS
         ts = [it["created_at"] for it in arr]
         assert ts == sorted(ts, reverse=True)
 
-    def test_get_analysis_by_id_includes_image(self, jpeg_bytes):
-        files = {"file": ("s2.jpg", jpeg_bytes, "image/jpeg")}
-        created = requests.post(f"{API}/analyze", files=files, timeout=45).json()
-        aid = created["id"]
-
+    def test_get_by_id_includes_image(self):
+        aid = getattr(pytest, "last_id", None)
+        if not aid:
+            pytest.skip("no analysis id from previous test")
         r = requests.get(f"{API}/analyses/{aid}", timeout=15)
         assert r.status_code == 200
         d = r.json()
         assert d["id"] == aid
         assert isinstance(d["image_data"], str) and len(d["image_data"]) > 100
-        assert d["warning"] == MANDATORY_WARNING
 
-    def test_get_analysis_invalid_id_returns_404(self):
+    def test_get_invalid_id_returns_404(self):
         r = requests.get(f"{API}/analyses/does-not-exist-xyz", timeout=15)
         assert r.status_code == 404

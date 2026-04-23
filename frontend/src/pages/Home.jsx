@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Camera, FlaskConical, ShieldAlert, ScanLine, FileText, ChevronRight, Activity } from 'lucide-react';
+import { Camera, FlaskConical, ShieldAlert, ScanLine, FileText, ChevronRight, Activity, Upload as UploadIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import axios from 'axios';
@@ -18,7 +18,7 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
       {/* ── Top bar ─────────────────────────────────────────────────── */}
       <header className="border-b border-zinc-200 bg-white sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -63,16 +63,16 @@ export default function Home() {
       </div>
 
       {/* ── Hero ────────────────────────────────────────────────────── */}
-      <section className="relative border-b border-zinc-200">
+      <section className="relative border-b border-zinc-200 overflow-hidden">
         <div className="absolute inset-0 wt-grid-bg opacity-70" />
-        <div className="relative max-w-7xl mx-auto px-6 py-16 md:py-24 grid md:grid-cols-12 gap-10 items-end">
+        <div className="relative max-w-7xl mx-auto px-6 py-12 md:py-24 md:grid md:grid-cols-12 md:gap-10 md:items-end flex flex-col gap-10">
 
           <div className="md:col-span-7">
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.45 }}
-              className="flex items-center gap-2 mb-6"
+              className="flex flex-wrap items-center gap-2 mb-6"
             >
               <div className="px-2 py-1 bg-white border border-zinc-200 font-mono text-[10px] tracking-[0.25em] text-zinc-600">
                 REF · CLINICAL-WATER-VISION · 2026
@@ -97,7 +97,7 @@ export default function Home() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.5, delay: 0.15 }}
-              className="mt-6 max-w-xl text-zinc-600 text-[15px] leading-relaxed"
+              className="mt-6 max-w-xl text-zinc-600 text-[14px] sm:text-[15px] leading-relaxed break-words"
             >
               Point your camera at any water source. <span className="font-medium text-zinc-950">WaterTruth</span> inspects colour,
               clarity, particles and surface, then returns a classification, drinkability verdict,
@@ -118,6 +118,13 @@ export default function Home() {
                 <Camera className="w-4 h-4" strokeWidth={2} />
                 <span>Start Camera Scan</span>
                 <ChevronRight className="w-4 h-4 opacity-60 group-hover:translate-x-0.5 transition-transform" />
+              </button>
+              <button
+                data-testid="upload-image-button"
+                onClick={() => navigate('/upload')}
+                className="inline-flex items-center gap-2 bg-white text-zinc-900 font-medium px-6 h-12 border border-zinc-200 rounded-sm hover:bg-zinc-50 active:scale-[0.98]"
+              >
+                <UploadIcon className="w-4 h-4" /> Upload image
               </button>
               <button
                 onClick={() => navigate('/history')}
@@ -141,7 +148,7 @@ export default function Home() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="md:col-span-5"
           >
-            <div className="bg-white border border-zinc-200 rounded-sm shadow-sm">
+            <div className="bg-white border border-zinc-200 rounded-sm shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-4 h-10 border-b border-zinc-200">
                 <div className="flex items-center gap-2">
                   <Activity className="w-3.5 h-3.5 text-sky-600" />
@@ -149,7 +156,7 @@ export default function Home() {
                 </div>
                 <div className="wt-label">JSON</div>
               </div>
-              <pre className="p-4 text-[12.5px] leading-relaxed font-mono text-zinc-800 overflow-x-auto">
+              <pre className="p-4 text-[12px] sm:text-[12.5px] leading-relaxed font-mono text-zinc-800 overflow-x-auto max-w-full">
 {`{
   "visual_analysis": {
     "color":          "slightly brown",
