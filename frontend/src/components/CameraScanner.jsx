@@ -12,8 +12,10 @@ const THRESHOLDS = {
   BLUR_MIN:             20,
   BRIGHTNESS_MIN:       15,
   BRIGHTNESS_MAX:      248,
-  AUTO_CAPTURE_QUALITY: 60,
+  AUTO_CAPTURE_QUALITY: 52,          // slightly more forgiving (was 60)
   WATER_CONFIDENCE_MIN: 42,
+  STABLE_TICKS_REQUIRED: 2,          // must stay 'optimal' for N consecutive ticks (~900ms)
+  HINT_AFTER_MS:       6_000,        // show manual-capture hint after 6s of stabilising
 };
 
 // ── RGB → HSV ────────────────────────────────────────────────────────────────
@@ -130,6 +132,8 @@ export default function CameraScanner() {
   const streamRef           = useRef(null);
   const analyzerIntervalRef = useRef(null);
   const captureLockedRef    = useRef(false);
+  const optimalStreakRef    = useRef(0);      // consecutive 'optimal' ticks
+  const scanStartRef        = useRef(Date.now());
 
   const [cameraActive,     setCameraActive]     = useState(false);
   const [status,           setStatus]           = useState('initializing');
@@ -137,6 +141,7 @@ export default function CameraScanner() {
   const [metrics,          setMetrics]          = useState({ quality: 0, blur: 0, brightness: 0, waterConfidence: 0 });
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [waterDetected,    setWaterDetected]    = useState(false);
+  const [showManualHint,   setShowManualHint]   = useState(false);
 
   const updateStatus = useCallback((s) => setStatus(s), []);
 
@@ -289,10 +294,28 @@ export default function CameraScanner() {
       else                                                     newStatus = 'optimal';
       setWaterDetected(hasWater);
       updateStatus(newStatus);
-      if (newStatus === 'optimal' && !captureLockedRef.current) {
-        captureLockedRef.current = true;
+
+      // Track consecutive optimal frames
+      if (newStatus === 'optimal') optimalStreakRef.current += 1;
+      else                          optimalStreakRef.current = 0;
+
+      // After HINT_AFTER_MS of stabilising with water detected but no capture → show manual hint
+      if (!showManualHint &&
+          hasWater &&
+          !captureLockedRef.current &&
+          Date.now() - scanStartRef.current > THRESHOLDS.HINT_AFTER_MS) {
+        setShowManualHint(true);
+      }
+
+      // FIX: do NOT pre-lock here. Let captureAndAnalyze self-lock once it actually runs.
+      // Only fire when streak is reached AND nothing is already in-flight.
+      if (
+        optimalStreakRef.current >= THRESHOLDS.STABLE_TICKS_REQUIRED &&
+        !captureLockedRef.current &&
+        !analyzing
+      ) {
         vibrate([100]);
-        setTimeout(() => captureAndAnalyze(), 600);
+        captureAndAnalyze();   // self-locks via its internal guard
       }
     }, 450);
     return () => { clearInterval(analyzerIntervalRef.current); analyzerIntervalRef.current = null; };
@@ -470,6 +493,19 @@ export default function CameraScanner() {
             </p>
           </div>
 
+          {/* Manual-capture hint — shown if stabilising >6s */}
+          {showManualHint && waterDetected && !analyzing && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mx-auto max-w-2xl mb-3 text-center"
+            >
+              <p className="font-mono text-[11px] tracking-[0.18em] text-amber-200">
+                ▸ AUTO-CAPTURE TAKING LONGER THAN USUAL · TAP BUTTON TO CAPTURE NOW
+              </p>
+            </motion.div>
+          )}
+
           {/* Capture button */}
           {cameraActive && !analyzing && (
             <div className="flex justify-center">
@@ -485,7 +521,7 @@ export default function CameraScanner() {
                 }}
                 className={`inline-flex items-center gap-2 px-7 h-12 rounded-sm font-medium text-sm border transition-colors
                   ${waterDetected
-                    ? 'bg-sky-500 text-white border-sky-400 hover:bg-sky-400'
+                    ? `bg-sky-500 text-white border-sky-400 hover:bg-sky-400 ${showManualHint ? 'wt-pulse-ring' : ''}`
                     : 'bg-white/10 text-white/40 border-white/10 cursor-not-allowed'}`}
               >
                 <Camera className="w-4 h-4" />
