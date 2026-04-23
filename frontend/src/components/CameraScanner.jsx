@@ -319,7 +319,7 @@ export default function CameraScanner() {
       }
     }, 450);
     return () => { clearInterval(analyzerIntervalRef.current); analyzerIntervalRef.current = null; };
-  }, [cameraActive, analyzing, analyzeFrame, updateStatus, captureAndAnalyze]);
+  }, [cameraActive, analyzing, analyzeFrame, updateStatus, captureAndAnalyze, showManualHint]);
 
   useEffect(() => { startCamera(); return () => stopCamera(); }, [startCamera, stopCamera]);
 
