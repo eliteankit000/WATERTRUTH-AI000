@@ -1,57 +1,35 @@
-/* WaterTruth AI — Service Worker
-   Relies on the browser cache + network only.
-   Does NOT hardcode hashed filenames — those change on every build.
+/* WaterTruth AI — Service Worker (kill switch)
+   Previous versions cached the app shell, which broke mobile users
+   after every redeploy because the cached HTML referenced old hashed
+   JS/CSS bundles that no longer exist (→ blank page).
+
+   This version unregisters itself, clears all caches it owns, and
+   forces every open client to reload to pick up fresh assets.
 */
 
-const CACHE_NAME = 'watertruth-v2';
-
-// Only cache the shell — NOT the hashed JS/CSS bundles
-const PRECACHE_URLS = [
-  '/',
-  '/manifest.json',
-  '/icon-192.png',
-];
-
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
-  );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      )
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (e) { /* ignore */ }
+
+    try {
+      await self.registration.unregister();
+    } catch (e) { /* ignore */ }
+
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const client of clients) {
+      try { client.navigate(client.url); } catch (e) { /* ignore */ }
+    }
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
-  // For navigation requests serve the app shell from cache
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      caches.match('/').then((cached) => cached || fetch(event.request))
-    );
-    return;
-  }
-
-  // For everything else: network first, fall back to cache
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Cache successful GET responses
-        if (event.request.method === 'GET' && response.status === 200) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request))
-  );
+  // Always go to the network — never serve stale cached responses.
+  event.respondWith(fetch(event.request));
 });
