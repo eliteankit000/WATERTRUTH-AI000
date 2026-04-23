@@ -185,11 +185,11 @@ def _row_to_dict(row: WaterAnalysis, include_image: bool = True) -> dict:
 # ─── Response schema ──────────────────────────────────────────────────────────
 
 class VisualAnalysis(BaseModel):
-    color: str
-    clarity: str
-    particles: str
-    surface: str
-    source_context: str
+    color: str          = "indeterminate"
+    clarity: str        = "indeterminate"
+    particles: str      = "indeterminate"
+    surface: str        = "indeterminate"
+    source_context: str = "indeterminate"
 
 
 class AnalysisResponse(BaseModel):
