@@ -1,28 +1,98 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Clinical / Swiss palette — never green for CLEAN */
+    --background: 0 0% 98%;            /* #FAFAFA */
+    --foreground: 240 6% 5%;           /* #09090B */
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 240 6% 5%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 199 89% 48%;
+    --popover-foreground: 240 6% 5%;
+    --primary: 240 6% 5%;              /* near-black */
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 84% 4.9%;
-    --muted: 210 40% 98%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 199 95% 92%;
-    --accent-foreground: 198 100% 30%;
-    --destructive: 0 84.2% 60.2%;
+    --secondary: 240 5% 96%;           /* #F4F4F5 */
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;    /* #71717A */
+    --accent: 199 89% 48%;             /* clinical sky */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;          /* #EF4444 */
     --destructive-foreground: 0 0% 100%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
+    --border: 240 5% 90%;              /* #E4E4E7 */
+    --input: 240 5% 90%;
     --ring: 199 89% 48%;
-    --radius: 0.5rem;
+    --radius: 0.25rem;                 /* sharper, Swiss */
   }
 }
+
+html, body, #root {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Inter', 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display { font-family: 'IBM Plex Sans', sans-serif; letter-spacing: -0.02em; }
+.font-mono    { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+/* ── Clinical grid background (subtle) ─────────────────────────────── */
+.wt-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(9, 9, 11, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(9, 9, 11, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.wt-dot-bg {
+  background-image: radial-gradient(rgba(9, 9, 11, 0.12) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ── Data label (uppercase mono) ───────────────────────────────────── */
+.wt-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: hsl(240 4% 46%);
+}
+
+/* ── Scanner crosshair pulse ───────────────────────────────────────── */
+@keyframes wt-scan {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+.wt-scan-line {
+  animation: wt-scan 2.4s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+}
+
+@keyframes wt-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.55); }
+  70%  { box-shadow: 0 0 0 14px rgba(14, 165, 233, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+}
+.wt-pulse-ring { animation: wt-pulse-ring 2s infinite; }
+
+/* Marquee ticker for disclaimer */
+@keyframes wt-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.wt-marquee { animation: wt-marquee 40s linear infinite; white-space: nowrap; }
+
+/* Classification colour chips (NEVER green) */
+.wt-class-CLEAN                 { background: #E0F2FE; color: #075985; border: 1px solid #38BDF8; }
+.wt-class-SLIGHTLY_CONTAMINATED { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
+.wt-class-DIRTY                 { background: #FED7AA; color: #9A3412; border: 1px solid #EA580C; }
+.wt-class-HIGHLY_POLLUTED       { background: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; }
+.wt-class-NO_WATER_DETECTED     { background: #F4F4F5; color: #3F3F46; border: 1px solid #A1A1AA; }
+
+.wt-conf-HIGH   { background: #E4E4E7; color: #18181B; }
+.wt-conf-MEDIUM { background: #FEF3C7; color: #854D0E; }
+.wt-conf-LOW    { background: #FEE2E2; color: #991B1B; }

@@ -1,94 +1,21 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Additional component-level styles for WaterTruth AI */
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+.App { min-height: 100vh; }
+
+/* Clinical data panel */
+.data-panel {
+  background: #FAFAFA;
+  border: 1px solid #E4E4E7;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-body {
-  font-family: 'Inter', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #FFFFFF;
-  color: #0F172A;
-}
+/* Corner brackets for scanner */
+.corner-br { width: 28px; height: 28px; position: absolute; }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: 'Outfit', sans-serif;
-  letter-spacing: -0.02em;
-}
-
-code, pre {
-  font-family: 'JetBrains Mono', monospace;
-}
-
-.hero-gradient {
-  background: linear-gradient(180deg, #E0F2FE 0%, #FFFFFF 100%);
-}
-
-.glass-card {
-  backdrop-filter: blur(24px);
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.wave-animation {
-  animation: wave 2s ease-in-out infinite;
-}
-
-@keyframes wave {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-}
-
-.upload-dropzone {
-  transition: all 0.3s ease;
-  border: 2px dashed #E2E8F0;
-}
-
-.upload-dropzone:hover {
-  border-color: #0284C7;
-  background-color: #F8FAFC;
-}
-
-.upload-dropzone.dragover {
-  border-color: #0284C7;
-  background-color: #E0F2FE;
-  transform: scale(1.02);
-}
-
-.risk-badge-low {
-  background-color: #ECFDF5;
-  color: #065F46;
-  border: 1px solid #10B981;
-}
-
-.risk-badge-medium {
-  background-color: #FFFBEB;
-  color: #92400E;
-  border: 1px solid #F59E0B;
-}
-
-.risk-badge-high {
-  background-color: #FEF2F2;
-  color: #991B1B;
-  border: 1px solid #EF4444;
-}
-
-.feature-card {
-  transition: all 0.3s ease-out;
-}
-
-.feature-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-}
-
-.scroll-smooth {
-  scroll-behavior: smooth;
+/* Subtle moving dots under hero */
+.wt-noise {
+  background-image: radial-gradient(rgba(9,9,11,0.06) 1px, transparent 1px);
+  background-size: 14px 14px;
 }

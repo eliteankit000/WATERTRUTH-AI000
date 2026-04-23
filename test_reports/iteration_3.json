@@ -1,0 +1,37 @@
+{
+  "summary": "End-to-end backend + frontend test of rewritten WaterTruth AI (GPT-5.2 vision + Supabase) running in graceful fallback (no OPENAI_API_KEY, no DATABASE_URL). 9/9 pytest cases pass and all 4 UI flows (Home, /scan loads, History, Results) behave per spec. Strict JSON schema and mandatory safety warning verified verbatim.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_watertruth_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py uses deprecated FastAPI @app.on_event('startup'/'shutdown'); prefer lifespan context manager (non-blocking, but flagged by FastAPI >=0.110).",
+    "CORS is allow_origins=['*'] with allow_credentials=False — OK for a public read/write API but tighten in production when auth is added.",
+    "Catch-all React fallback route @app.get('/{full_path:path}') is registered after /api router so API routes are unaffected, but it will also swallow unknown /api/* 404s only if someone removes the router prefix — acceptable but worth a comment.",
+    "analyze_water reads the whole upload into memory with no explicit size limit; rate-limit is 20/min, but add a max_bytes guard (e.g., 10 MB) to avoid DoS via huge uploads.",
+    "_memory_store is process-local — acceptable fallback, but document that horizontal scaling will lose it; already partially noted in logs.",
+    "Home.jsx axios calls swallow errors silently (.catch(() => {})); fine for graceful degrade but consider surfacing a toast for non-connectivity failures.",
+    "image_data is stored as full base64 JPEG in the DB Text column — for scale consider moving to Supabase Storage and storing only a URL."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_watertruth_api.py (new)",
+    "/app/test_reports/pytest/pytest_results.xml (generated)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "none — fallback mode, no auth required",
+  "seed_data_creation": "Analyze endpoint was hit ~5 times with a synthetic JPEG during tests; entries appear in the in-memory store and are visible on /history. They will evaporate on backend restart.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "When OPENAI_API_KEY and DATABASE_URL are later populated, re-run /app/backend/tests/test_watertruth_api.py; the fallback-mode assertions (classification=NO_WATER_DETECTED, drinkability=N/A, confidence=LOW, recommendation mentions OPENAI_API_KEY) WILL FAIL by design. Split those into a separate test class gated by an env flag (e.g., WATERTRUTH_FALLBACK_MODE=1). Live-camera flow on /scan was intentionally NOT tested — only page-load + cancel-scan-button presence were verified (capture-frame-button only renders once getUserMedia succeeds, which the container cannot grant).",
+  "rca of the issue": "No bugs found. MOCKED INTEGRATIONS: OpenAI GPT-5.2 vision is disabled via empty OPENAI_API_KEY — backend returns deterministic NO_WATER_DETECTED/N/A/LOW. Supabase is disabled via empty DATABASE_URL — backend uses an in-memory dict store. Both fallbacks behave per spec and return the strict JSON schema with verbatim mandatory warning. Verified: GET /api/health reports 'in-memory (fallback)' + 'not configured (fallback)' + model 'n/a'; POST /api/analyze with valid JPEG returns full schema incl. base64 image_data + ISO created_at; invalid/empty/corrupted uploads all return 400; GET /api/analyses?limit=5 returns array sorted newest-first with image_data stripped; GET /api/analyses/{id} returns full doc or 404; drinkability deterministically matches classification via sanitiser. Frontend: Home renders with [data-testid=start-scan-button] (text 'Start Camera Scan') and navigates to /scan; History renders 4 history-feed-item cards; Results page renders [data-testid=mandatory-safety-warning] (exact spec text), [data-testid=results-classification-badge]='NO WATER DETECTED', [data-testid=drinkability-verdict]='N/A', and the raw JSON <details> drawer."
+}
